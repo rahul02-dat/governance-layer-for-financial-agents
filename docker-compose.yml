@@ -1,0 +1,74 @@
+
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: agentguard
+      POSTGRES_PASSWORD: agentguard_password
+      POSTGRES_DB: agentguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  opa:
+    image: openpolicyagent/opa:latest
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr"
+      - "0.0.0.0:8181"
+      - "--log-level=debug"
+      - "/policies"
+    volumes:
+      - ./policies:/policies
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://agentguard:agentguard_password@postgres:5432/agentguard
+      - REDIS_URL=redis://redis:6379/0
+      - OPA_URL=http://opa:8181
+      - JWT_SECRET=supersecret_for_development_only
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opa:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
