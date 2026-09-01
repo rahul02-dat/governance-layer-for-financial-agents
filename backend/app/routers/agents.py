@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app import models, schemas
+from app import models, schemas, redis_client
 
 router = APIRouter(
     prefix="/agents",
@@ -53,7 +53,16 @@ def revoke_agent(agent_id: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_agent)
     
-    # TODO: Sync revocation to Redis for fast path evaluation
+    redis_client.set_agent_status(agent_id, "REVOKED")
+    audit = models.AuditEvent(
+        event_type="AGENT_REVOKED",
+        agent_id=agent_id,
+        action="REVOKE_AGENT",
+        decision="ALLOW",
+        reason="OPERATOR_REQUEST"
+    )
+    db.add(audit)
+    db.commit()
     
     return db_agent
 
@@ -67,7 +76,16 @@ def restore_agent(agent_id: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_agent)
     
-    # TODO: Sync restoration to Redis for fast path evaluation
+    redis_client.set_agent_status(agent_id, "ACTIVE")
+    audit = models.AuditEvent(
+        event_type="AGENT_RESTORED",
+        agent_id=agent_id,
+        action="RESTORE_AGENT",
+        decision="ALLOW",
+        reason="OPERATOR_REQUEST"
+    )
+    db.add(audit)
+    db.commit()
     
     return db_agent
 

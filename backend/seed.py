@@ -40,6 +40,7 @@ def seed():
                     "allowed_accounts": ["ACC-001", "ACC-002"],
                     "allowed_currencies": ["INR"],
                     "max_amount": 50000,
+                    "requires_approval_above": 10000.0,
                     "enabled": True
                 })
             elif idx == 1:

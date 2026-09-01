@@ -74,3 +74,21 @@ class AuditEvent(Base):
     operator_id = Column(String, nullable=True)
     request_id = Column(String, nullable=True)
     latency_ms = Column(Float, nullable=True)
+
+class ApprovalRequest(Base):
+    __tablename__ = "approval_requests"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    agent_id = Column(String, ForeignKey("agents.id"), nullable=False)
+    action = Column(String, nullable=False)
+    resource_type = Column(String, nullable=False)
+    resource_id = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    currency = Column(String, nullable=False)
+    request_id = Column(String, nullable=True)
+    status = Column(String, default="PENDING") # PENDING, APPROVED, DENIED
+    policy_id = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    agent = relationship("Agent")

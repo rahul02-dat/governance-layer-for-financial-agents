@@ -17,6 +17,15 @@ def get_budgets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
 def create_budget(budget: schemas.BudgetCreate, db: Session = Depends(get_db)):
     db_budget = models.Budget(**budget.model_dump())
     db.add(db_budget)
+    
+    audit = models.AuditEvent(
+        event_type="BUDGET_CREATED",
+        action="CREATE_BUDGET",
+        decision="ALLOW",
+        reason="OPERATOR_REQUEST"
+    )
+    db.add(audit)
+    
     db.commit()
     db.refresh(db_budget)
     return db_budget
@@ -31,6 +40,14 @@ def update_budget(budget_id: str, budget_update: schemas.BudgetUpdate, db: Sessi
     for key, value in update_data.items():
         setattr(db_budget, key, value)
         
+    audit = models.AuditEvent(
+        event_type="BUDGET_UPDATED",
+        action="UPDATE_BUDGET",
+        decision="ALLOW",
+        reason="OPERATOR_REQUEST"
+    )
+    db.add(audit)
+    
     db.commit()
     db.refresh(db_budget)
     return db_budget

@@ -219,3 +219,26 @@ h2 { font-size: 1.75rem; }
   font-weight: 700;
   color: var(--text-main);
 }
+
+/* Forms */
+input, select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  margin-bottom: 16px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, select:focus {
+  border-color: var(--accent-color);
+}
+label {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}

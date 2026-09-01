@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.config import settings
-from app.routers import agents, policies, budgets, fleet, authorize, audit
+from app.routers import agents, policies, budgets, fleet, authorize, audit, analytics, approvals
 
 app = FastAPI(
     title="AgentGuard API",
@@ -14,6 +14,8 @@ app.include_router(budgets.router)
 app.include_router(fleet.router)
 app.include_router(authorize.router)
 app.include_router(audit.router)
+app.include_router(analytics.router)
+app.include_router(approvals.router)
 
 @app.get("/health")
 def health_check():

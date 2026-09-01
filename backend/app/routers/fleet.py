@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends
-from app import schemas
+from sqlalchemy.orm import Session
+from app import schemas, models, redis_client
+from app.database import get_db
 
 router = APIRouter(
     prefix="/fleet",
@@ -8,17 +10,31 @@ router = APIRouter(
 
 @router.get("/status")
 def get_fleet_status():
-    # TODO: Fetch real status from Redis
-    return {"fleet_state": "ACTIVE"}
+    status = redis_client.get_fleet_status()
+    return {"fleet_state": status}
 
 @router.post("/emergency-stop")
-def emergency_stop():
-    # TODO: Set fleet status in Redis
-    # TODO: Create Audit Event
+def emergency_stop(db: Session = Depends(get_db)):
+    redis_client.set_fleet_status("HALTED")
+    audit = models.AuditEvent(
+        event_type="FLEET_HALTED",
+        action="HALT_FLEET",
+        decision="ALLOW",
+        reason="OPERATOR_REQUEST"
+    )
+    db.add(audit)
+    db.commit()
     return {"status": "success", "fleet_state": "HALTED"}
 
 @router.post("/resume")
-def resume_fleet():
-    # TODO: Resume fleet status in Redis
-    # TODO: Create Audit Event
+def resume_fleet(db: Session = Depends(get_db)):
+    redis_client.set_fleet_status("ACTIVE")
+    audit = models.AuditEvent(
+        event_type="FLEET_RESUMED",
+        action="RESUME_FLEET",
+        decision="ALLOW",
+        reason="OPERATOR_REQUEST"
+    )
+    db.add(audit)
+    db.commit()
     return {"status": "success", "fleet_state": "ACTIVE"}
