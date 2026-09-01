@@ -10,7 +10,10 @@ AgentGuard is a financial governance and safety control plane for fleets of auto
 - **Fail-Closed Semantics:** Any error or timeout in identity, status, or policy checks results in an automatic denial.
 - **Fleet Emergency Stop:** Operators can instantly halt all financial mutations across the entire fleet.
 - **Complete Audit Logging:** Immutable records of every authorization request and governance change.
-- **Operator Dashboard:** A React-based interface for managing agents, policies, and budgets in real-time.
+- **Authorization Simulator:** A safe environment to test policy evaluations without draining budgets or mutating real data.
+- **Governance Control Tower:** A live analytical dashboard providing telemetry on fleet health, denial rates, and aggregated blockers.
+- **Investigation Console:** A detailed audit exploration tool with server-side filtering for deep-diving into individual authorization traces.
+- **Human Approval Workflow:** High-value actions are automatically intercepted and routed to a secure operator inbox for manual approval.
 
 ---
 
@@ -44,25 +47,16 @@ Make sure you have the following installed on your machine:
 
 ## 3. How to Start the Stack
 
-AgentGuard runs a PostgreSQL database, a Redis cache, and an Open Policy Agent instance via Docker. 
+The entire AgentGuard stack (PostgreSQL, Redis, OPA, Backend API, and Frontend Dashboard) is fully containerized.
 
-To start the infrastructure:
+To build and start the entire infrastructure:
 ```bash
-docker compose up -d
+docker compose up --build
 ```
 
-To start the backend API server:
-```bash
-source .venv/bin/activate
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-To start the frontend operator dashboard (in a separate terminal):
-```bash
-cd frontend
-npm run dev
-```
+The services will be available at:
+- **Operator Dashboard (Frontend):** [http://localhost:5173](http://localhost:5173)
+- **Backend API:** [http://localhost:8000](http://localhost:8000)
 
 ## 4. How to Run Migrations
 
