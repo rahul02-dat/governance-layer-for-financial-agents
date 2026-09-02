@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app import models, schemas, redis_client
+from app.auth import RequireRole
 
 router = APIRouter(
     prefix="/agents",
-    tags=["Agents"]
+    tags=["Agents"],
+    dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
 @router.get("/", response_model=List[schemas.AgentResponse])
@@ -44,7 +46,7 @@ def update_agent(agent_id: str, agent_update: schemas.AgentUpdate, db: Session =
     return db_agent
 
 @router.post("/{agent_id}/revoke", response_model=schemas.AgentResponse)
-def revoke_agent(agent_id: str, db: Session = Depends(get_db)):
+def revoke_agent(agent_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     if not db_agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -59,7 +61,8 @@ def revoke_agent(agent_id: str, db: Session = Depends(get_db)):
         agent_id=agent_id,
         action="REVOKE_AGENT",
         decision="ALLOW",
-        reason="OPERATOR_REQUEST"
+        reason="OPERATOR_REQUEST",
+        operator_id=current_user.get("sub", "unknown")
     )
     db.add(audit)
     db.commit()
@@ -67,7 +70,7 @@ def revoke_agent(agent_id: str, db: Session = Depends(get_db)):
     return db_agent
 
 @router.post("/{agent_id}/restore", response_model=schemas.AgentResponse)
-def restore_agent(agent_id: str, db: Session = Depends(get_db)):
+def restore_agent(agent_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     if not db_agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -82,7 +85,8 @@ def restore_agent(agent_id: str, db: Session = Depends(get_db)):
         agent_id=agent_id,
         action="RESTORE_AGENT",
         decision="ALLOW",
-        reason="OPERATOR_REQUEST"
+        reason="OPERATOR_REQUEST",
+        operator_id=current_user.get("sub", "unknown")
     )
     db.add(audit)
     db.commit()
@@ -115,3 +119,22 @@ def delete_permission(permission_id: str, db: Session = Depends(get_db)):
     db.delete(db_permission)
     db.commit()
     return None
+
+class AgentInvokeRequest(schemas.BaseModel):
+    objective: str
+
+@router.post("/{agent_id}/invoke")
+def invoke_agent(agent_id: str, request: AgentInvokeRequest, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR", "AGENT"]))):
+    from app.agent.runtime import AgentRuntime
+    from app.auth import create_access_token
+    
+    agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+        
+    # Generate a temporary token for the agent to authenticate itself to AgentGuard
+    agent_token = create_access_token({"sub": agent_id, "role": "AGENT"})
+    
+    runtime = AgentRuntime(agent_id, agent_token)
+    result = runtime.run(request.objective)
+    return result

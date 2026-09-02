@@ -17,6 +17,7 @@ export default defineConfig({
       '/audit-events': 'http://backend:8000',
       '/analytics': 'http://backend:8000',
       '/approvals': 'http://backend:8000',
+      '/dev/token': 'http://backend:8000',
     }
   }
 })

@@ -11,7 +11,8 @@ const Simulator = () => {
     resource_id: 'ACC-001',
     amount: 10000,
     currency: 'INR',
-    request_id: `req-${Math.floor(Math.random() * 100000)}`
+    request_id: `req-${Math.floor(Math.random() * 100000)}`,
+    simulate: true
   });
 
   const [result, setResult] = useState<any>(null);
@@ -35,8 +36,13 @@ const Simulator = () => {
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: name === 'amount' ? Number(value) : value }));
+    const { name, value, type } = e.target;
+    if (type === 'checkbox') {
+      const checked = (e.target as HTMLInputElement).checked;
+      setFormData(prev => ({ ...prev, [name]: checked }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: name === 'amount' ? Number(value) : value }));
+    }
   };
 
   const handleSimulate = async (e: React.FormEvent) => {
@@ -46,7 +52,7 @@ const Simulator = () => {
     setResult(null);
 
     try {
-      const payload = { ...formData, simulate: true };
+      const payload = { ...formData };
       const res = await axios.post('/authorize/', payload);
       setResult(res.data);
     } catch (err: any) {
@@ -93,8 +99,13 @@ const Simulator = () => {
             <label>Request ID</label>
             <input type="text" name="request_id" value={formData.request_id} onChange={handleChange} required />
 
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', marginTop: '8px' }}>
-              <Play size={18} /> {loading ? 'Simulating...' : 'Run Simulation'}
+            <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input type="checkbox" id="simulate" name="simulate" checked={formData.simulate} onChange={handleChange} />
+              <label htmlFor="simulate" style={{ margin: 0, fontWeight: 'normal', cursor: 'pointer' }}>Simulate only (no side-effects)</label>
+            </div>
+
+            <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', marginTop: '16px' }}>
+              <Play size={18} /> {loading ? (formData.simulate ? 'Simulating...' : 'Executing...') : (formData.simulate ? 'Run Simulation' : 'Execute Action')}
             </button>
           </form>
           {error && <div style={{ color: 'var(--danger-color)', marginTop: '16px' }}>{error}</div>}

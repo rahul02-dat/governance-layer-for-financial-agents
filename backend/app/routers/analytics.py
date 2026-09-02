@@ -3,11 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app import models
+from app.auth import RequireRole
 from typing import List, Dict, Any
 
 router = APIRouter(
     prefix="/analytics",
-    tags=["Analytics"]
+    tags=["Analytics"],
+    dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR", "AUDITOR"]))]
 )
 
 @router.get("/overview")

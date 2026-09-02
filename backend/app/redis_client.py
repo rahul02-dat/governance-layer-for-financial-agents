@@ -1,4 +1,5 @@
 import redis
+from decimal import Decimal
 from app.config import settings
 
 redis_client = redis.from_url(settings.redis_url, decode_responses=True)
@@ -52,12 +53,12 @@ def get_agent_status(agent_id: str) -> str:
         # Fail closed
         return "REVOKED"
 
-def reserve_budgets(budgets: dict[str, float]) -> bool:
+def reserve_budgets(budgets: dict[str, Decimal]) -> bool:
     if not budgets:
         return True
     
     keys = list(budgets.keys())
-    args = [int(amount) for amount in budgets.values()]
+    args = [int(amount * 100) for amount in budgets.values()]
     
     try:
         res = budget_consume(keys=keys, args=args)
@@ -66,12 +67,12 @@ def reserve_budgets(budgets: dict[str, float]) -> bool:
         # Fail closed
         return False
 
-def check_budgets(budgets: dict[str, float]) -> bool:
+def check_budgets(budgets: dict[str, Decimal]) -> bool:
     if not budgets:
         return True
     
     keys = list(budgets.keys())
-    args = [int(amount) for amount in budgets.values()]
+    args = [int(amount * 100) for amount in budgets.values()]
     
     try:
         current_values = redis_client.mget(keys)
@@ -83,5 +84,5 @@ def check_budgets(budgets: dict[str, float]) -> bool:
         # Fail closed
         return False
 
-def initialize_budget(budget_key: str, amount: float):
-    redis_client.set(budget_key, int(amount))
+def initialize_budget(budget_key: str, amount: Decimal):
+    redis_client.set(budget_key, int(amount * 100))

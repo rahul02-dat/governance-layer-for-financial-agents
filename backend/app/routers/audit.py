@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app import models
+from app.auth import RequireRole
 
 router = APIRouter(
     prefix="/audit-events",
-    tags=["Audit"]
+    tags=["Audit"],
+    dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR", "AUDITOR"]))]
 )
 
 from typing import List, Optional

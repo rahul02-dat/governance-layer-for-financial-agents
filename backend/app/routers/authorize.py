@@ -3,9 +3,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from app.database import get_db
 from app import models, redis_client
 from app.config import settings
+from app.auth import RequireRole
 import time
 
 router = APIRouter(
@@ -18,7 +20,7 @@ class AuthorizeRequest(BaseModel):
     action: str
     resource_type: str
     resource_id: str
-    amount: float
+    amount: Decimal
     currency: str
     request_id: str
     simulate: bool = False
@@ -27,7 +29,7 @@ class AuthorizeResponse(BaseModel):
     decision: str
     authorization_id: str = None
     policy_id: str = None
-    remaining_budget: float = None
+    remaining_budget: Decimal = None
     expires_at: str = None
     reason: str = None
     trace: list[dict] = None
@@ -37,15 +39,46 @@ def get_agent_permissions(agent_id: str, db: Session):
         models.Permission.agent_id == agent_id,
         models.Permission.enabled == True
     ).all()
-    return [{"action": p.action, "resource_type": p.resource_type, "allowed_accounts": p.allowed_accounts, "allowed_currencies": p.allowed_currencies, "max_amount": p.max_amount} for p in permissions]
+    return [{"action": p.action, "resource_type": p.resource_type, "allowed_accounts": p.allowed_accounts, "allowed_currencies": p.allowed_currencies, "max_amount": float(p.max_amount) if p.max_amount is not None else None} for p in permissions]
 
 @router.post("/", response_model=AuthorizeResponse)
-def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db)):
+def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["AGENT", "ADMIN", "OPERATOR"]))):
     start_time = time.time()
     trace = []
     
-    def record_trace(step_name, status):
-        trace.append({"step": step_name, "status": status})
+    # 0. Idempotency Check
+    if request.request_id:
+        # Check if we already processed this exact request_id
+        previous_event = db.query(models.AuditEvent).filter(
+            models.AuditEvent.request_id == request.request_id,
+            models.AuditEvent.event_type == "AUTHORIZATION_DECISION"
+        ).first()
+        
+        if previous_event:
+            # Check if it is the EXACT same request
+            if (previous_event.agent_id == request.agent_id and
+                previous_event.action == request.action and
+                previous_event.resource_type == request.resource_type and
+                previous_event.resource_id == request.resource_id and
+                previous_event.amount == request.amount and
+                previous_event.currency == request.currency):
+                
+                # It's an identical retry. Return the exact same result.
+                return AuthorizeResponse(
+                    decision=previous_event.decision,
+                    authorization_id=previous_event.authorization_id,
+                    reason=previous_event.reason,
+                    trace=[{"step": "0. Idempotency Cache Hit", "status": "PASS"}]
+                )
+            else:
+                # Materially different request with same ID!
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="IDEMPOTENCY_CONFLICT: A different request with this request_id was already processed."
+                )
+    
+    def record_trace(step_name, status_val):
+        trace.append({"step": step_name, "status": status_val})
         
     record_trace("1. Request Validation", "PASS")
     
@@ -73,7 +106,10 @@ def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db)):
         "input": {
             "fleet_state": fleet_status,
             "agent_status": agent_status,
-            "request": request.model_dump(),
+            "request": {
+                **request.model_dump(),
+                "amount": float(request.amount)
+            },
             "permissions": permissions
         }
     }
@@ -85,7 +121,7 @@ def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db)):
     except Exception as e:
         # Fail closed on OPA error
         record_trace("5. OPA Policy", "FAIL")
-        return create_audit_and_deny(db, request, "POLICY_EVALUATION_FAILED", str(e), start_time, trace)
+        return create_audit_and_deny(db, request, f"POLICY_EVALUATION_FAILED: {str(e)}", str(e), start_time, trace)
     
     if not opa_decision.get("allowed", False):
         record_trace("5. OPA Policy", "FAIL")
@@ -136,7 +172,7 @@ def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db)):
                 decision="PENDING_APPROVAL",
                 reason="EXCEEDS_APPROVAL_THRESHOLD",
                 request_id=request.request_id,
-                latency_ms=(time.time() - start_time) * 1000
+                latency_ms=int((time.time() - start_time) * 1000)
             )
             db.add(audit)
             db.commit()
@@ -206,7 +242,8 @@ def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db)):
             decision="ALLOW",
             reason="POLICY_MATCH",
             request_id=request.request_id,
-            latency_ms=(time.time() - start_time) * 1000
+            authorization_id=auth_id,
+            latency_ms=int((time.time() - start_time) * 1000)
         )
         db.add(audit)
         db.commit()
@@ -235,7 +272,7 @@ def create_audit_and_deny(db, request, reason, details, start_time, trace=None):
             decision="DENY",
             reason=reason,
             request_id=request.request_id,
-            latency_ms=(time.time() - start_time) * 1000
+            latency_ms=int((time.time() - start_time) * 1000)
         )
         db.add(audit)
         db.commit()

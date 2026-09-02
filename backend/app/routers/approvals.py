@@ -7,10 +7,12 @@ import time
 
 from app.database import get_db
 from app import models, redis_client
+from app.auth import RequireRole
 
 router = APIRouter(
     prefix="/approvals",
-    tags=["Approvals"]
+    tags=["Approvals"],
+    dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
 class ApprovalResponse(BaseModel):
@@ -76,23 +78,37 @@ def get_approval(approval_id: str, db: Session = Depends(get_db)):
     )
 
 @router.post("/{approval_id}/approve")
-def approve_request(approval_id: str, db: Session = Depends(get_db)):
-    req = db.query(models.ApprovalRequest).filter(models.ApprovalRequest.id == approval_id).first()
+def approve_request(approval_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
+    operator_id = current_user.get("sub", "unknown_operator")
+    
+    # Use with_for_update to prevent race conditions during concurrent approvals
+    req = db.query(models.ApprovalRequest).filter(
+        models.ApprovalRequest.id == approval_id
+    ).with_for_update().first()
     
     if not req:
         raise HTTPException(status_code=404, detail="Approval request not found")
         
     if req.status != "PENDING":
+        db.rollback()
         raise HTTPException(status_code=400, detail=f"Cannot approve request with status {req.status}")
+        
+    # Check expiration (15 minutes)
+    if req.created_at < datetime.now(timezone.utc) - timedelta(minutes=15):
+        req.status = "EXPIRED"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Approval request has expired")
 
     # Check fleet state
     fleet_status = redis_client.get_fleet_status()
     if fleet_status != "ACTIVE":
+        db.rollback()
         raise HTTPException(status_code=400, detail="Cannot approve: Fleet is HALTED")
 
     # Check agent state
     agent_status = redis_client.get_agent_status(req.agent_id)
     if agent_status != "ACTIVE":
+        db.rollback()
         raise HTTPException(status_code=400, detail="Cannot approve: Agent is REVOKED")
 
     start_time = time.time()
@@ -136,8 +152,8 @@ def approve_request(approval_id: str, db: Session = Depends(get_db)):
             decision="DENY",
             reason="BUDGET_EXCEEDED",
             request_id=req.request_id,
-            operator_id="operator", # Placeholder for operator auth
-            latency_ms=(time.time() - start_time) * 1000
+            operator_id=operator_id,
+            latency_ms=int((time.time() - start_time) * 1000)
         )
         db.add(audit)
         db.commit()
@@ -158,8 +174,8 @@ def approve_request(approval_id: str, db: Session = Depends(get_db)):
         decision="ALLOW",
         reason="OPERATOR_APPROVED",
         request_id=req.request_id,
-        operator_id="operator",
-        latency_ms=(time.time() - start_time) * 1000
+        operator_id=operator_id,
+        latency_ms=int((time.time() - start_time) * 1000)
     )
     db.add(audit)
     db.commit()
@@ -167,13 +183,19 @@ def approve_request(approval_id: str, db: Session = Depends(get_db)):
     return {"status": "success", "decision": "ALLOW"}
 
 @router.post("/{approval_id}/deny")
-def deny_request(approval_id: str, db: Session = Depends(get_db)):
-    req = db.query(models.ApprovalRequest).filter(models.ApprovalRequest.id == approval_id).first()
+def deny_request(approval_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
+    operator_id = current_user.get("sub", "unknown_operator")
+    
+    # Use with_for_update to prevent race conditions
+    req = db.query(models.ApprovalRequest).filter(
+        models.ApprovalRequest.id == approval_id
+    ).with_for_update().first()
     
     if not req:
         raise HTTPException(status_code=404, detail="Approval request not found")
         
     if req.status != "PENDING":
+        db.rollback()
         raise HTTPException(status_code=400, detail=f"Cannot deny request with status {req.status}")
         
     req.status = "DENIED"
@@ -189,7 +211,7 @@ def deny_request(approval_id: str, db: Session = Depends(get_db)):
         decision="DENY",
         reason="OPERATOR_DENIED",
         request_id=req.request_id,
-        operator_id="operator"
+        operator_id=operator_id
     )
     
     db.add(audit)

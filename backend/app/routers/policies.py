@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app import models, schemas
+from app.auth import RequireRole
 
 router = APIRouter(
     prefix="/policies",
-    tags=["Policies"]
+    tags=["Policies"],
+    dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
 @router.get("/", response_model=List[schemas.PolicyResponse])

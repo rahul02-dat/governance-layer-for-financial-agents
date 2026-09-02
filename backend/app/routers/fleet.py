@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app import schemas, models, redis_client
 from app.database import get_db
+from app.auth import RequireRole
 
 router = APIRouter(
     prefix="/fleet",
-    tags=["Fleet"]
+    tags=["Fleet"],
+    dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
 @router.get("/status")
@@ -14,26 +16,28 @@ def get_fleet_status():
     return {"fleet_state": status}
 
 @router.post("/emergency-stop")
-def emergency_stop(db: Session = Depends(get_db)):
+def emergency_stop(db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
     redis_client.set_fleet_status("HALTED")
     audit = models.AuditEvent(
         event_type="FLEET_HALTED",
         action="HALT_FLEET",
         decision="ALLOW",
-        reason="OPERATOR_REQUEST"
+        reason="OPERATOR_REQUEST",
+        operator_id=current_user.get("sub", "unknown")
     )
     db.add(audit)
     db.commit()
     return {"status": "success", "fleet_state": "HALTED"}
 
 @router.post("/resume")
-def resume_fleet(db: Session = Depends(get_db)):
+def resume_fleet(db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
     redis_client.set_fleet_status("ACTIVE")
     audit = models.AuditEvent(
         event_type="FLEET_RESUMED",
         action="RESUME_FLEET",
         decision="ALLOW",
-        reason="OPERATOR_REQUEST"
+        reason="OPERATOR_REQUEST",
+        operator_id=current_user.get("sub", "unknown")
     )
     db.add(audit)
     db.commit()

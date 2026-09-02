@@ -1,5 +1,10 @@
 import httpx
 import time
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from app.auth import create_access_token
 
 BASE_URL = "http://localhost:8000"
 
@@ -7,13 +12,18 @@ def seed():
     print("Waiting for API...")
     time.sleep(2)
     
+    admin_token = create_access_token({"sub": "admin-1", "role": "ADMIN"})
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    
+    print(f"Generated Admin Token (use this in frontend): {admin_token}")
+    
     # 1. Create Fleet Budget
     print("Creating Fleet Budget...")
     httpx.post(f"{BASE_URL}/budgets/", json={
         "scope": "FLEET_DAILY",
         "limit_amount": 10000000,
         "currency": "INR"
-    })
+    }, headers=headers)
     
     # 2. Create Agents
     agents = [
@@ -23,12 +33,11 @@ def seed():
     ]
     for idx, agent in enumerate(agents):
         print(f"Creating Agent: {agent['name']}")
-        # Using patch or just direct creation if ID can't be forced via API, but let's just create and let DB assign uuid if needed, or we might need to modify schema to allow setting ID in seed if required. For simplicity, we just use the API and get generated IDs.
         res = httpx.post(f"{BASE_URL}/agents/", json={
             "name": agent["name"],
             "owner": agent["owner"],
             "risk_tier": agent["risk_tier"]
-        })
+        }, headers=headers)
         if res.status_code == 201:
             agent_id = res.json()["id"]
             
@@ -42,19 +51,22 @@ def seed():
                     "max_amount": 50000,
                     "requires_approval_above": 10000.0,
                     "enabled": True
-                })
+                }, headers=headers)
+                
+                agent_token = create_access_token({"sub": agent_id, "role": "AGENT"})
+                print(f"Generated Agent Token for {agent['name']}: {agent_token}")
             elif idx == 1:
                 httpx.post(f"{BASE_URL}/agents/{agent_id}/permissions", json={
                     "action": "READ_ACCOUNT",
                     "resource_type": "corporate_account",
                     "enabled": True
-                })
+                }, headers=headers)
             elif idx == 2:
                 httpx.post(f"{BASE_URL}/agents/{agent_id}/permissions", json={
                     "action": "GENERATE_REPORT",
                     "resource_type": "financial_data",
                     "enabled": True
-                })
+                }, headers=headers)
 
     print("Seeding complete.")
 
