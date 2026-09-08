@@ -20,36 +20,36 @@ def get_overview(db: Session = Depends(get_db)):
     revoked_agents = db.query(models.Agent).filter(models.Agent.status == "REVOKED").count()
 
     # Request stats
-    total_requests = db.query(models.AuditEvent).filter(models.AuditEvent.event_type == "AUTHORIZATION").count()
+    total_requests = db.query(models.AuditEvent).filter(models.AuditEvent.event_type == "AUTHORIZATION_DECISION").count()
     
     allowed_requests = db.query(models.AuditEvent).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "ALLOW"
     ).count()
     
     denied_requests = db.query(models.AuditEvent).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "DENY"
     ).count()
 
     pending_requests = db.query(models.AuditEvent).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "PENDING_APPROVAL"
     ).count()
 
     # Value stats
     value_governed = db.query(func.sum(models.AuditEvent.amount)).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "ALLOW"
     ).scalar() or 0.0
 
     value_blocked = db.query(func.sum(models.AuditEvent.amount)).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "DENY"
     ).scalar() or 0.0
 
     pending_value = db.query(func.sum(models.AuditEvent.amount)).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "PENDING_APPROVAL"
     ).scalar() or 0.0
 
@@ -84,7 +84,7 @@ def get_denials(db: Session = Depends(get_db)):
         models.AuditEvent.reason,
         func.count(models.AuditEvent.id).label("count")
     ).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION",
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
         models.AuditEvent.decision == "DENY",
         models.AuditEvent.reason != None
     ).group_by(models.AuditEvent.reason).order_by(func.count(models.AuditEvent.id).desc()).all()
@@ -100,18 +100,18 @@ def get_agent_health(db: Session = Depends(get_db)):
     for agent in agents:
         total_reqs = db.query(models.AuditEvent).filter(
             models.AuditEvent.agent_id == agent.id,
-            models.AuditEvent.event_type == "AUTHORIZATION"
+            models.AuditEvent.event_type == "AUTHORIZATION_DECISION"
         ).count()
         
         denied_reqs = db.query(models.AuditEvent).filter(
             models.AuditEvent.agent_id == agent.id,
-            models.AuditEvent.event_type == "AUTHORIZATION",
+            models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
             models.AuditEvent.decision == "DENY"
         ).count()
 
         blocked_val = db.query(func.sum(models.AuditEvent.amount)).filter(
             models.AuditEvent.agent_id == agent.id,
-            models.AuditEvent.event_type == "AUTHORIZATION",
+            models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
             models.AuditEvent.decision == "DENY"
         ).scalar() or 0.0
 

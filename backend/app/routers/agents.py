@@ -2,8 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app import models, schemas, redis_client
+from app import models, schemas
 from app.auth import RequireRole
+from app.services.quarantine import QuarantineService
+from app.services.audit import AuditService
+from app.services.agent_state import AgentStateService
 
 router = APIRouter(
     prefix="/agents",
@@ -47,40 +50,22 @@ def update_agent(agent_id: str, agent_update: schemas.AgentUpdate, db: Session =
 
 @router.post("/{agent_id}/revoke", response_model=schemas.AgentResponse)
 def revoke_agent(agent_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
+    # This invokes QuarantineService, which immediately revokes, logs, and triggers K8s containment
+    success = QuarantineService.quarantine_agent(db, agent_id, operator_id=current_user.get("sub", "unknown"))
+    if not success:
+        raise HTTPException(status_code=404, detail="Agent not found or could not be revoked")
+    
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
-    if not db_agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    
-    db_agent.status = "REVOKED"
-    db.commit()
-    db.refresh(db_agent)
-    
-    redis_client.set_agent_status(agent_id, "REVOKED")
-    audit = models.AuditEvent(
-        event_type="AGENT_REVOKED",
-        agent_id=agent_id,
-        action="REVOKE_AGENT",
-        decision="ALLOW",
-        reason="OPERATOR_REQUEST",
-        operator_id=current_user.get("sub", "unknown")
-    )
-    db.add(audit)
-    db.commit()
-    
     return db_agent
 
 @router.post("/{agent_id}/restore", response_model=schemas.AgentResponse)
 def restore_agent(agent_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
-    db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
-    if not db_agent:
+    success = AgentStateService.update_agent_status(db, agent_id, "ACTIVE")
+    if not success:
         raise HTTPException(status_code=404, detail="Agent not found")
     
-    db_agent.status = "ACTIVE"
-    db.commit()
-    db.refresh(db_agent)
-    
-    redis_client.set_agent_status(agent_id, "ACTIVE")
-    audit = models.AuditEvent(
+    AuditService.create_audit_event(
+        db=db,
         event_type="AGENT_RESTORED",
         agent_id=agent_id,
         action="RESTORE_AGENT",
@@ -88,9 +73,9 @@ def restore_agent(agent_id: str, db: Session = Depends(get_db), current_user: di
         reason="OPERATOR_REQUEST",
         operator_id=current_user.get("sub", "unknown")
     )
-    db.add(audit)
     db.commit()
     
+    db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     return db_agent
 
 @router.post("/{agent_id}/permissions", response_model=schemas.PermissionResponse, status_code=status.HTTP_201_CREATED)
@@ -132,7 +117,6 @@ def invoke_agent(agent_id: str, request: AgentInvokeRequest, db: Session = Depen
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
         
-    # Generate a temporary token for the agent to authenticate itself to AgentGuard
     agent_token = create_access_token({"sub": agent_id, "role": "AGENT"})
     
     runtime = AgentRuntime(agent_id, agent_token)

@@ -6,8 +6,11 @@ from typing import List, Optional
 import time
 
 from app.database import get_db
-from app import models, redis_client
+from app import models
 from app.auth import RequireRole
+from app.services.approval import ApprovalService
+from app.services.authorization import AuthorizationService
+from app.services.audit import AuditService
 
 router = APIRouter(
     prefix="/approvals",
@@ -99,94 +102,36 @@ def approve_request(approval_id: str, db: Session = Depends(get_db), current_use
         db.commit()
         raise HTTPException(status_code=400, detail="Approval request has expired")
 
-    # Check fleet state
-    fleet_status = redis_client.get_fleet_status()
-    if fleet_status != "ACTIVE":
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Cannot approve: Fleet is HALTED")
-
-    # Check agent state
-    agent_status = redis_client.get_agent_status(req.agent_id)
-    if agent_status != "ACTIVE":
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Cannot approve: Agent is REVOKED")
-
-    start_time = time.time()
+    # Re-evaluate the entire governance stack, skipping the approval threshold check to prevent loop
+    request_data = {
+        "agent_id": req.agent_id,
+        "action": req.action,
+        "resource_type": req.resource_type,
+        "resource_id": req.resource_id,
+        "amount": req.amount,
+        "currency": req.currency,
+        # We don't reuse request_id to avoid idempotency returning PENDING again
+        "request_id": f"approved_{req.request_id}" if req.request_id else None
+    }
     
-    # Check and reserve budgets
-    fleet_budget_key = "agentguard:budget:fleet:daily"
-    agent_budget_key = f"agentguard:budget:agent:{req.agent_id}:daily"
+    # Re-evaluate (this creates its own ALLOW/DENY audit event and reserves budget)
+    auth_result = AuthorizationService.evaluate_request(db, request_data, simulate=False, skip_approval_check=True)
     
-    budgets_to_reserve = {}
-    
-    if redis_client.redis_client.get(fleet_budget_key) is None:
-        fleet_budget = db.query(models.Budget).filter(models.Budget.scope == "FLEET_DAILY").first()
-        if fleet_budget:
-            redis_client.initialize_budget(fleet_budget_key, fleet_budget.limit_amount)
-    if redis_client.redis_client.exists(fleet_budget_key):
-        budgets_to_reserve[fleet_budget_key] = req.amount
-        
-    if redis_client.redis_client.get(agent_budget_key) is None:
-        agent_budget = db.query(models.Budget).filter(
-            models.Budget.scope == "AGENT_DAILY",
-            models.Budget.target_id == req.agent_id
-        ).first()
-        if agent_budget:
-            redis_client.initialize_budget(agent_budget_key, agent_budget.limit_amount)
-    if redis_client.redis_client.exists(agent_budget_key):
-        budgets_to_reserve[agent_budget_key] = req.amount
-        
-    success = redis_client.reserve_budgets(budgets_to_reserve)
-
-    if not success:
-        # We can deny it or keep it pending. Let's deny it.
+    if auth_result["decision"] == "DENY":
         req.status = "DENIED"
-        audit = models.AuditEvent(
-            event_type="AUTHORIZATION_DECISION",
-            agent_id=req.agent_id,
-            action=req.action,
-            resource_type=req.resource_type,
-            resource_id=req.resource_id,
-            amount=req.amount,
-            currency=req.currency,
-            decision="DENY",
-            reason="BUDGET_EXCEEDED",
-            request_id=req.request_id,
-            operator_id=operator_id,
-            latency_ms=int((time.time() - start_time) * 1000)
-        )
-        db.add(audit)
         db.commit()
-        raise HTTPException(status_code=400, detail="Cannot approve: Budget exceeded")
-
-    # Success! Update request and log ALLOW
+        raise HTTPException(status_code=400, detail=f"Approval re-evaluation resulted in DENY: {auth_result.get('reason')}")
+        
     req.status = "APPROVED"
-    
-    # Create the final ALLOW audit event
-    audit = models.AuditEvent(
-        event_type="AUTHORIZATION_DECISION",
-        agent_id=req.agent_id,
-        action=req.action,
-        resource_type=req.resource_type,
-        resource_id=req.resource_id,
-        amount=req.amount,
-        currency=req.currency,
-        decision="ALLOW",
-        reason="OPERATOR_APPROVED",
-        request_id=req.request_id,
-        operator_id=operator_id,
-        latency_ms=int((time.time() - start_time) * 1000)
-    )
-    db.add(audit)
+    req.operator_id = operator_id
     db.commit()
     
-    return {"status": "success", "decision": "ALLOW"}
+    return {"status": "success", "decision": "ALLOW", "authorization_id": auth_result.get("authorization_id")}
 
 @router.post("/{approval_id}/deny")
 def deny_request(approval_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
     operator_id = current_user.get("sub", "unknown_operator")
     
-    # Use with_for_update to prevent race conditions
     req = db.query(models.ApprovalRequest).filter(
         models.ApprovalRequest.id == approval_id
     ).with_for_update().first()
@@ -199,8 +144,10 @@ def deny_request(approval_id: str, db: Session = Depends(get_db), current_user: 
         raise HTTPException(status_code=400, detail=f"Cannot deny request with status {req.status}")
         
     req.status = "DENIED"
+    req.operator_id = operator_id
     
-    audit = models.AuditEvent(
+    AuditService.create_audit_event(
+        db=db,
         event_type="AUTHORIZATION_DECISION",
         agent_id=req.agent_id,
         action=req.action,
@@ -214,7 +161,5 @@ def deny_request(approval_id: str, db: Session = Depends(get_db), current_user: 
         operator_id=operator_id
     )
     
-    db.add(audit)
     db.commit()
-    
     return {"status": "success", "decision": "DENY"}
