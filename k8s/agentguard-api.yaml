@@ -39,13 +39,13 @@ spec:
             memory: "1Gi"
         livenessProbe:
           httpGet:
-            path: /health/liveness
+            path: /health
             port: 8000
           initialDelaySeconds: 15
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health/readiness
+            path: /health
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 10
