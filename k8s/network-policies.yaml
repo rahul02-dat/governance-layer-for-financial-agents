@@ -1,0 +1,219 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: agentguard
+spec:
+  podSelector: {} # Select all pods in the namespace
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Allow all pods to resolve DNS (CoreDNS in kube-system)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: agentguard
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Allow API to access DB, Redis, and OPA
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-egress-to-backing-services
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: agentguard-api
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: opa
+    ports:
+    - protocol: TCP
+      port: 8181
+  # The API also needs to reach the Kubernetes API to quarantine pods
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0 # We could restrict this to the K8s API server IP, but it varies per cluster
+    ports:
+    - protocol: TCP
+      port: 443
+---
+# Allow DB to receive traffic from API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-ingress-from-api
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: agentguard-api
+    ports:
+    - protocol: TCP
+      port: 5432
+---
+# Allow Redis to receive traffic from API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress-from-api
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: agentguard-api
+    ports:
+    - protocol: TCP
+      port: 6379
+---
+# Allow OPA to receive traffic from API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opa-ingress-from-api
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: opa
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: agentguard-api
+    ports:
+    - protocol: TCP
+      port: 8181
+---
+# Allow API to receive traffic from frontend and agents
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: agentguard-api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    - podSelector:
+        matchLabels:
+          role: agent
+    ports:
+    - protocol: TCP
+      port: 8000
+---
+# Allow frontend to access API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress-to-api
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: agentguard-api
+    ports:
+    - protocol: TCP
+      port: 8000
+---
+# Allow ingress to frontend from anywhere (for user access)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-ingress
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 80
+---
+# Agents can only reach the API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-egress-to-api
+  namespace: agentguard
+spec:
+  podSelector:
+    matchLabels:
+      role: agent
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: agentguard-api
+    ports:
+    - protocol: TCP
+      port: 8000

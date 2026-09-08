@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-agent
+  namespace: agentguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-agent
+      role: agent
+  template:
+    metadata:
+      labels:
+        app: payments-agent
+        role: agent
+    spec:
+      containers:
+      - name: agent
+        image: alpine:latest
+        command: ["/bin/sh", "-c", "while true; do sleep 3600; done"]
+        env:
+        - name: AGENT_ID
+          value: "payments-01"
+        - name: AGENTGUARD_URL
+          value: "http://agentguard-api:8000"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"

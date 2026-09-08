@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentguard-config
+  namespace: agentguard
+data:
+  APP_ENV: "production"
+  DATABASE_URL: "postgresql://agentguard:agentguard_password@postgres:5432/agentguard"
+  REDIS_URL: "redis://redis:6379/0"
+  OPA_URL: "http://opa:8181"
+  FRONTEND_URL: "http://localhost:5173" # Update as needed for ingress

@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: agentguard
+spec:
+  selector:
+    app: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: agentguard
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: agentguard
+spec:
+  selector:
+    app: opa
+  ports:
+    - protocol: TCP
+      port: 8181
+      targetPort: 8181
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentguard-api
+  namespace: agentguard
+spec:
+  selector:
+    app: agentguard-api
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: agentguard
+spec:
+  type: ClusterIP # Keep it internal for port-forwarding, or optionally LoadBalancer/NodePort
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
