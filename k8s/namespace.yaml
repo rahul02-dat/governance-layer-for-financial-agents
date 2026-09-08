@@ -4,3 +4,9 @@ metadata:
   name: agentguard
   labels:
     name: agentguard
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentguard-sa
+  namespace: agentguard
