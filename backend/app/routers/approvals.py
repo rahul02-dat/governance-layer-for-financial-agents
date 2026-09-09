@@ -29,8 +29,10 @@ class ApprovalResponse(BaseModel):
     currency: str
     status: str
     created_at: str
+    parent_request_id: Optional[str] = None
+    decision_attempt: Optional[int] = None
 
-@router.get("/", response_model=List[ApprovalResponse])
+@router.get("", response_model=List[ApprovalResponse])
 def get_approvals(status: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(models.ApprovalRequest, models.Agent.name).join(
         models.Agent, models.ApprovalRequest.agent_id == models.Agent.id
@@ -51,7 +53,9 @@ def get_approvals(status: Optional[str] = None, db: Session = Depends(get_db)):
             amount=req.amount,
             currency=req.currency,
             status=req.status,
-            created_at=req.created_at.isoformat()
+            created_at=req.created_at.isoformat(),
+            parent_request_id=req.parent_request_id,
+            decision_attempt=req.decision_attempt
         )
         for req, agent_name in results
     ]
@@ -77,7 +81,9 @@ def get_approval(approval_id: str, db: Session = Depends(get_db)):
         amount=req.amount,
         currency=req.currency,
         status=req.status,
-        created_at=req.created_at.isoformat()
+        created_at=req.created_at.isoformat(),
+        parent_request_id=req.parent_request_id,
+        decision_attempt=req.decision_attempt
     )
 
 @router.post("/{approval_id}/approve")

@@ -13,6 +13,8 @@ interface ApprovalRequest {
   currency: string;
   status: string;
   created_at: string;
+  parent_request_id?: string;
+  decision_attempt?: number;
 }
 
 const Approvals: React.FC = () => {
@@ -24,7 +26,7 @@ const Approvals: React.FC = () => {
     try {
       // Only fetch pending approvals for the inbox by default, or all if we want history
       // For now, let's fetch all and filter client side for tabs if we want, or just fetch pending
-      const res = await axios.get('/approvals/?status=PENDING');
+      const res = await axios.get('/approvals?status=PENDING');
       setApprovals(res.data);
       setError('');
     } catch (err: any) {
@@ -94,7 +96,7 @@ const Approvals: React.FC = () => {
                   </span>
                 </h3>
                 
-                <div className="text-sm text-gray-400 grid grid-cols-2 gap-x-8 gap-y-1 mt-3">
+                <div className="text-sm text-gray-400 grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-1 mt-3">
                   <div>
                     <span className="text-gray-500">Agent:</span> <span className="font-mono text-gray-300">{req.agent_name}</span>
                   </div>
@@ -107,6 +109,16 @@ const Approvals: React.FC = () => {
                   <div>
                     <span className="text-gray-500">Req ID:</span> <span className="font-mono text-gray-500">{req.id.substring(0,8)}...</span>
                   </div>
+                  {req.parent_request_id && (
+                    <div>
+                      <span className="text-gray-500">Parent:</span> <span className="font-mono text-gray-500">{req.parent_request_id.substring(0,8)}...</span>
+                    </div>
+                  )}
+                  {req.decision_attempt !== undefined && req.decision_attempt > 1 && (
+                    <div>
+                      <span className="text-gray-500">Attempt:</span> <span className="font-mono text-gray-500">{req.decision_attempt}</span>
+                    </div>
+                  )}
                 </div>
               </div>
               
