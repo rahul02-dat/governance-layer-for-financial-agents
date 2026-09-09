@@ -11,11 +11,11 @@ const FleetOverview = () => {
   const fetchData = async () => {
     try {
       const [ovRes, denRes, agRes, eventsRes, fleetRes] = await Promise.all([
-        axios.get('/analytics/overview'),
-        axios.get('/analytics/denials'),
-        axios.get('/analytics/agents'),
-        axios.get('/audit-events?limit=5'),
-        axios.get('/fleet/status')
+        axios.get('/api/analytics/overview'),
+        axios.get('/api/analytics/denials'),
+        axios.get('/api/analytics/agents'),
+        axios.get('/api/audit-events?limit=5'),
+        axios.get('/api/fleet/status')
       ]);
       
       setOverview(ovRes.data);

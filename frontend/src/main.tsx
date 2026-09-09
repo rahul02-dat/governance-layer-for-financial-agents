@@ -8,7 +8,8 @@ import axios from 'axios'
 
 const initApp = async () => {
   try {
-    const res = await axios.get('/dev/token');
+    axios.defaults.baseURL = '/api';
+    const res = await axios.get('/api/dev/token');
     const token = res.data.token;
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   } catch (err) {

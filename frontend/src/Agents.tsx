@@ -19,7 +19,7 @@ const Agents = () => {
 
   const fetchAgents = async () => {
     try {
-      const res = await axios.get('/agents');
+      const res = await axios.get('/api/agents');
       setAgents(res.data);
     } catch (e) {
       console.error(e);
@@ -28,7 +28,7 @@ const Agents = () => {
 
   const handleRevoke = async (id: string) => {
     try {
-      await axios.post(`/agents/${id}/revoke`);
+      await axios.post(`/api/agents/${id}/revoke`);
       fetchAgents();
     } catch (e) {
       console.error(e);
@@ -37,7 +37,7 @@ const Agents = () => {
 
   const handleRestore = async (id: string) => {
     try {
-      await axios.post(`/agents/${id}/restore`);
+      await axios.post(`/api/agents/${id}/restore`);
       fetchAgents();
     } catch (e) {
       console.error(e);

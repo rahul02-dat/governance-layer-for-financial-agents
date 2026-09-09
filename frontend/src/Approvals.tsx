@@ -26,7 +26,7 @@ const Approvals: React.FC = () => {
     try {
       // Only fetch pending approvals for the inbox by default, or all if we want history
       // For now, let's fetch all and filter client side for tabs if we want, or just fetch pending
-      const res = await axios.get('/approvals?status=PENDING');
+      const res = await axios.get('/api/approvals?status=PENDING');
       setApprovals(res.data);
       setError('');
     } catch (err: any) {
@@ -45,7 +45,7 @@ const Approvals: React.FC = () => {
 
   const handleAction = async (id: string, action: 'approve' | 'deny') => {
     try {
-      await axios.post(`/approvals/${id}/${action}`);
+      await axios.post(`/api/approvals/${id}/${action}`);
       // Remove from pending list optimistically or refresh
       fetchApprovals();
     } catch (err: any) {

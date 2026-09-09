@@ -11,25 +11,31 @@ app = FastAPI(
     version="0.1.0"
 )
 
-app.include_router(agents.router)
-app.include_router(policies.router)
-app.include_router(budgets.router)
-app.include_router(fleet.router)
-app.include_router(authorize.router)
-app.include_router(audit.router)
-app.include_router(analytics.router)
-app.include_router(approvals.router)
-app.include_router(execution.router)
+from fastapi import APIRouter
 
-@app.get("/health")
+api_router = APIRouter(prefix="/api")
+
+api_router.include_router(agents.router)
+api_router.include_router(policies.router)
+api_router.include_router(budgets.router)
+api_router.include_router(fleet.router)
+api_router.include_router(authorize.router)
+api_router.include_router(audit.router)
+api_router.include_router(analytics.router)
+api_router.include_router(approvals.router)
+api_router.include_router(execution.router)
+
+@api_router.get("/health")
 def health_check():
     return {"status": "ok", "environment": settings.environment}
 
-@app.get("/dev/token")
+@api_router.get("/dev/token")
 def get_dev_token():
     from app.auth import create_access_token
     token = create_access_token({"sub": "admin-hackathon", "role": "ADMIN"})
     return {"token": token}
+
+app.include_router(api_router)
 
 @app.get("/ready")
 def readiness_check(db = Depends(get_db)):

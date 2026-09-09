@@ -25,7 +25,7 @@ const Simulator = () => {
 
   const fetchAgents = async () => {
     try {
-      const res = await axios.get('/agents');
+      const res = await axios.get('/api/agents');
       setAgents(res.data);
       if (res.data.length > 0) {
         setFormData(prev => ({ ...prev, agent_id: res.data[0].id }));
@@ -53,7 +53,7 @@ const Simulator = () => {
 
     try {
       const payload = { ...formData };
-      const res = await axios.post('/authorize', payload);
+      const res = await axios.post('/api/authorize', payload);
       setResult(res.data);
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message);

@@ -28,7 +28,7 @@ const InvestigationConsole = () => {
       if (filters.request_id) url += `&request_id=${filters.request_id}`;
       if (filters.reason) url += `&reason=${filters.reason}`;
 
-      const res = await axios.get(url);
+      const res = await axios.get('/api' + url);
       setEvents(res.data.items || res.data); // Support both paginated and non-paginated backends temporarily
       setTotal(res.data.total || (res.data.length ? res.data.length : 0));
     } catch (e) {
