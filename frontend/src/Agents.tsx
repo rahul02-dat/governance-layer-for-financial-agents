@@ -19,7 +19,7 @@ const Agents = () => {
 
   const fetchAgents = async () => {
     try {
-      const res = await axios.get('/agents/');
+      const res = await axios.get('/agents');
       setAgents(res.data);
     } catch (e) {
       console.error(e);

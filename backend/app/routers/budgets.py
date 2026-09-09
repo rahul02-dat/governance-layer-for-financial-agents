@@ -11,11 +11,11 @@ router = APIRouter(
     dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
-@router.get("/", response_model=List[schemas.BudgetResponse])
+@router.get("", response_model=List[schemas.BudgetResponse])
 def get_budgets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(models.Budget).offset(skip).limit(limit).all()
 
-@router.post("/", response_model=schemas.BudgetResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=schemas.BudgetResponse, status_code=status.HTTP_201_CREATED)
 def create_budget(budget: schemas.BudgetCreate, db: Session = Depends(get_db)):
     db_budget = models.Budget(**budget.model_dump())
     db.add(db_budget)

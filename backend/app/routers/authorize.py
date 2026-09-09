@@ -30,7 +30,7 @@ class AuthorizeResponse(BaseModel):
     reason: str = None
     trace: list[dict] = None
 
-@router.post("/", response_model=AuthorizeResponse)
+@router.post("", response_model=AuthorizeResponse)
 def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["AGENT", "ADMIN", "OPERATOR"]))):
     try:
         result = AuthorizationService.evaluate_request(db, request.model_dump(), request.simulate)

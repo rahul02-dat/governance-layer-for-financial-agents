@@ -18,7 +18,7 @@ class PaginatedAuditEvents(BaseModel):
     total: int
     items: List[dict] # We'll return dicts or we can rely on FastAPI serialization of ORM
 
-@router.get("/")
+@router.get("")
 def get_audit_events(
     skip: int = 0, 
     limit: int = 100,

@@ -14,7 +14,7 @@ router = APIRouter(
     dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
-@router.get("/", response_model=List[schemas.AgentResponse])
+@router.get("", response_model=List[schemas.AgentResponse])
 def get_agents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     agents = db.query(models.Agent).offset(skip).limit(limit).all()
     return agents
@@ -26,7 +26,7 @@ def get_agent(agent_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
 
-@router.post("/", response_model=schemas.AgentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=schemas.AgentResponse, status_code=status.HTTP_201_CREATED)
 def create_agent(agent: schemas.AgentCreate, db: Session = Depends(get_db)):
     db_agent = models.Agent(**agent.model_dump())
     db.add(db_agent)

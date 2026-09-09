@@ -11,7 +11,7 @@ router = APIRouter(
     dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR"]))]
 )
 
-@router.get("/", response_model=List[schemas.PolicyResponse])
+@router.get("", response_model=List[schemas.PolicyResponse])
 def get_policies(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(models.Policy).offset(skip).limit(limit).all()
 
@@ -22,7 +22,7 @@ def get_policy(policy_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Policy not found")
     return policy
 
-@router.post("/", response_model=schemas.PolicyResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=schemas.PolicyResponse, status_code=status.HTTP_201_CREATED)
 def create_policy(policy: schemas.PolicyCreate, db: Session = Depends(get_db)):
     db_policy = models.Policy(**policy.model_dump())
     db.add(db_policy)
