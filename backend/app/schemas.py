@@ -56,12 +56,36 @@ class PolicyUpdate(BaseModel):
     rego_content: Optional[str] = None
     enabled: Optional[bool] = None
 
-class PolicyResponse(PolicyBase):
+class PolicyVersionResponse(BaseModel):
     id: str
+    policy_id: str
+    version_number: int
+    rego_content: str
+    content_hash: str
     created_at: datetime
-    updated_at: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
+
+class PolicyResponse(BaseModel):
+    id: str
+    name: str
+    enabled: bool
+    rego_content: Optional[str] = None
+    version_number: Optional[int] = None
+    content_hash: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    versions: List[PolicyVersionResponse] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+class QuarantineResponse(BaseModel):
+    agent_id: str
+    financial_revocation: str
+    kubernetes_containment: str
+    overall: str
+    error: Optional[str] = None
+    agent: Optional[AgentResponse] = None
 
 class BudgetBase(BaseModel):
     scope: str

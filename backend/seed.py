@@ -68,6 +68,23 @@ def seed():
                     "enabled": True
                 }, headers=headers)
 
+    # 3. Create Default Policies
+    print("Creating Governance Policies...")
+    policies = [
+        {
+            "name": "Single Transaction Cap Policy",
+            "rego_content": "package agentguard.authz\n\ndefault allow = false\n\nallow {\n    input.amount <= 50000\n    input.currency == \"INR\"\n}",
+            "enabled": True
+        },
+        {
+            "name": "Dual-Control Threshold Policy",
+            "rego_content": "package agentguard.authz\n\nrequires_approval {\n    input.amount > 10000\n}",
+            "enabled": True
+        }
+    ]
+    for p in policies:
+        httpx.post(f"{BASE_URL}/policies", json=p, headers=headers)
+
     print("Seeding complete.")
 
 if __name__ == "__main__":

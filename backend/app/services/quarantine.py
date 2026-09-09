@@ -24,20 +24,21 @@ def resolve_workload_name(agent_id: str) -> str:
 
 class QuarantineService:
     @staticmethod
-    def quarantine_agent(db: Session, agent_id: str, operator_id: str = "system") -> bool:
+    def quarantine_agent_detailed(db: Session, agent_id: str, operator_id: str = "system") -> dict:
         """
-        Quarantines an agent following the strict security sequence:
-        1. AgentGuard updates local state to REVOKED immediately (authoritative financial control)
-        2. Financial revocation audit event is persisted
-        3. Kubernetes workload isolation is applied and verified
-        4. If Kubernetes fails, financial revocation is NEVER rolled back.
+        Quarantines an agent and returns explicit execution telemetry for financial revocation
+        and Kubernetes workload containment.
         """
-        # Step 1: Revoke locally immediately
         success = AgentStateService.update_agent_status(db, agent_id, "REVOKED")
         if not success:
-            return False
+            return {
+                "agent_id": agent_id,
+                "financial_revocation": "FAILED",
+                "kubernetes_containment": "NOT_ATTEMPTED",
+                "overall": "FAILED",
+                "error": "Agent not found or status update failed"
+            }
 
-        # Step 2: Audit Local Revocation
         AuditService.create_audit_event(
             db=db,
             event_type="AGENT_REVOKED",
@@ -46,13 +47,16 @@ class QuarantineService:
             operator_id=operator_id
         )
         
-        # Step 3: Kubernetes Workload Containment
+        k8s_success = False
+        k8s_error = None
         try:
             deployment_name = resolve_workload_name(agent_id)
             QuarantineService._apply_kubernetes_containment(deployment_name)
             containment_reason = f"Kubernetes containment applied: deployment {deployment_name} scaled to 0"
+            k8s_success = True
         except Exception as e:
-            containment_reason = f"Kubernetes containment failed: {str(e)}"
+            k8s_error = str(e)
+            containment_reason = f"Kubernetes containment failed: {k8s_error}"
             
         AuditService.create_audit_event(
             db=db,
@@ -63,7 +67,25 @@ class QuarantineService:
         )
 
         db.commit()
-        return True
+        return {
+            "agent_id": agent_id,
+            "financial_revocation": "SUCCESS",
+            "kubernetes_containment": "SUCCESS" if k8s_success else "FAILED",
+            "overall": "SUCCESS" if k8s_success else "PARTIAL_SUCCESS",
+            "error": k8s_error
+        }
+
+    @staticmethod
+    def quarantine_agent(db: Session, agent_id: str, operator_id: str = "system") -> bool:
+        """
+        Quarantines an agent following the strict security sequence:
+        1. AgentGuard updates local state to REVOKED immediately (authoritative financial control)
+        2. Financial revocation audit event is persisted
+        3. Kubernetes workload isolation is applied and verified
+        4. If Kubernetes fails, financial revocation is NEVER rolled back.
+        """
+        result = QuarantineService.quarantine_agent_detailed(db, agent_id, operator_id)
+        return result["financial_revocation"] == "SUCCESS"
         
     @staticmethod
     def _apply_kubernetes_containment(deployment_name: str):

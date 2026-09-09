@@ -59,6 +59,22 @@ def revoke_agent(agent_id: str, db: Session = Depends(get_db), current_user: dic
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     return db_agent
 
+@router.post("/{agent_id}/quarantine", response_model=schemas.QuarantineResponse)
+def quarantine_agent_endpoint(agent_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
+    result = QuarantineService.quarantine_agent_detailed(db, agent_id, operator_id=current_user.get("sub", "unknown"))
+    if result["overall"] == "FAILED" and result.get("error") == "Agent not found or status update failed":
+        raise HTTPException(status_code=404, detail="Agent not found or could not be revoked")
+    
+    db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
+    return schemas.QuarantineResponse(
+        agent_id=result["agent_id"],
+        financial_revocation=result["financial_revocation"],
+        kubernetes_containment=result["kubernetes_containment"],
+        overall=result["overall"],
+        error=result.get("error"),
+        agent=schemas.AgentResponse.model_validate(db_agent) if db_agent else None
+    )
+
 @router.post("/{agent_id}/restore", response_model=schemas.AgentResponse)
 def restore_agent(agent_id: str, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "OPERATOR"]))):
     success = AgentStateService.update_agent_status(db, agent_id, "ACTIVE")

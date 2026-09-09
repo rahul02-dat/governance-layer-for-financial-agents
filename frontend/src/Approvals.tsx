@@ -1,143 +1,345 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { formatDistanceToNow } from 'date-fns';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { getApprovals, approveRequest, denyRequest } from './api/approvals';
+import type { ApprovalRequest } from './types/api';
+import { formatMoney, formatDateTime, formatRelativeTime } from './utils/formatters';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { Toast, type ToastMessage } from './components/Toast';
+import { EmptyState } from './components/EmptyState';
+import { CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-react';
 
-interface ApprovalRequest {
+interface PendingActionState {
   id: string;
-  agent_id: string;
-  agent_name: string;
-  action: string;
-  resource_type: string;
-  resource_id: string;
-  amount: number;
-  currency: string;
-  status: string;
-  created_at: string;
-  parent_request_id?: string;
-  decision_attempt?: number;
+  action: 'approve' | 'deny';
+  request: ApprovalRequest;
 }
 
 const Approvals: React.FC = () => {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'PENDING' | 'ALL'>('PENDING');
+  const [loading, setLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  const fetchApprovals = async () => {
+  // Per-item loading state to prevent double-click submissions
+  const [actionInProgressId, setActionInProgressId] = useState<string | null>(null);
+
+  // Confirmation dialog state
+  const [confirmAction, setConfirmAction] = useState<PendingActionState | null>(null);
+
+  const isMountedRef = useRef(true);
+
+  const fetchApprovalList = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) setIsRefreshing(true);
     try {
-      // Only fetch pending approvals for the inbox by default, or all if we want history
-      // For now, let's fetch all and filter client side for tabs if we want, or just fetch pending
-      const res = await axios.get('/api/approvals?status=PENDING');
-      setApprovals(res.data);
-      setError('');
-    } catch (err: any) {
-      console.error(err);
-      setError('Failed to fetch approvals.');
+      const data = await getApprovals(statusFilter === 'ALL' ? undefined : statusFilter, 0, 50);
+      if (!isMountedRef.current) return;
+      setApprovals(data);
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      const message = err instanceof Error ? err.message : 'Failed to fetch approvals';
+      setToast({ id: String(Date.now()), type: 'error', message: 'Failed to fetch approvals', detail: message });
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setIsRefreshing(false);
+      }
     }
-  };
+  }, [statusFilter]);
 
   useEffect(() => {
-    fetchApprovals();
-    const interval = setInterval(fetchApprovals, 5000); // real-time updates
-    return () => clearInterval(interval);
-  }, []);
+    isMountedRef.current = true;
+    fetchApprovalList();
 
-  const handleAction = async (id: string, action: 'approve' | 'deny') => {
+    const interval = setInterval(() => {
+      fetchApprovalList();
+    }, 5000);
+
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(interval);
+    };
+  }, [fetchApprovalList]);
+
+  const handleOpenConfirm = (request: ApprovalRequest, action: 'approve' | 'deny') => {
+    setConfirmAction({
+      id: request.id,
+      action,
+      request,
+    });
+  };
+
+  const handleExecuteAction = async () => {
+    if (!confirmAction || actionInProgressId) return;
+
+    const { id, action, request } = confirmAction;
+    setActionInProgressId(id);
+
     try {
-      await axios.post(`/api/approvals/${id}/${action}`);
-      // Remove from pending list optimistically or refresh
-      fetchApprovals();
-    } catch (err: any) {
-      console.error(err);
-      alert(err.response?.data?.detail || `Failed to ${action} request`);
+      if (action === 'approve') {
+        const res = await approveRequest(id);
+        setToast({
+          id: String(Date.now()),
+          type: 'success',
+          message: `Request for ${formatMoney(request.amount, request.currency)} approved`,
+          detail: res.authorization_id ? `Authorization ID: ${res.authorization_id}` : undefined,
+        });
+      } else {
+        await denyRequest(id);
+        setToast({
+          id: String(Date.now()),
+          type: 'info',
+          message: `Request for ${formatMoney(request.amount, request.currency)} denied`,
+        });
+      }
+
+      setConfirmAction(null);
+      await fetchApprovalList();
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : 'Approval operation failed';
+
+      // Section 27: Handle race conditions gracefully
+      if (errMessage.toLowerCase().includes('already') || errMessage.includes('status')) {
+        setToast({
+          id: String(Date.now()),
+          type: 'error',
+          message: 'This approval request has already been processed.',
+          detail: 'Refreshing approval list with authoritative state.',
+        });
+      } else if (errMessage.toLowerCase().includes('expired')) {
+        setToast({
+          id: String(Date.now()),
+          type: 'error',
+          message: 'Approval request has expired.',
+          detail: 'Authorizations expire after 15 minutes of inactivity.',
+        });
+      } else {
+        setToast({
+          id: String(Date.now()),
+          type: 'error',
+          message: `Failed to ${action} request`,
+          detail: errMessage,
+        });
+      }
+
+      setConfirmAction(null);
+      await fetchApprovalList();
+    } finally {
+      if (isMountedRef.current) {
+        setActionInProgressId(null);
+      }
     }
   };
 
-  if (loading) {
-    return <div className="text-gray-400">Loading approvals...</div>;
-  }
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'PENDING':
+        return <span className="badge badge-halted">Pending Approval</span>;
+      case 'APPROVED':
+        return <span className="badge badge-active">Approved</span>;
+      case 'DENIED':
+        return <span className="badge badge-revoked">Denied</span>;
+      case 'EXPIRED':
+        return <span className="badge" style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>Expired</span>;
+      default:
+        return <span className="badge">{status}</span>;
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Human Approval Workflow</h1>
-        <p className="text-gray-400">Review and authorize actions that exceed agent autonomy thresholds.</p>
-      </header>
+    <div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
-      {error && (
-        <div className="bg-red-900/50 border border-red-500 text-red-200 p-4 rounded-md">
-          {error}
-        </div>
+      {/* Confirmation Dialog */}
+      {confirmAction && (
+        <ConfirmDialog
+          isOpen={!!confirmAction}
+          title={confirmAction.action === 'approve' ? 'Authorize Financial Execution' : 'Deny Authorization Request'}
+          operationName={confirmAction.action === 'approve' ? 'Approving' : 'Denying'}
+          description={`Are you sure you want to ${confirmAction.action} this financial request from ${confirmAction.request.agent_name || confirmAction.request.agent_id}?`}
+          expectedEffect={
+            confirmAction.action === 'approve'
+              ? 'This will immediately issue an execution authorization and permit the financial transaction to proceed.'
+              : 'This will deny authorization and record a human operator denial in the cryptographic audit log.'
+          }
+          confirmButtonText={confirmAction.action === 'approve' ? 'Approve Request' : 'Deny Request'}
+          confirmButtonVariant={confirmAction.action === 'approve' ? 'primary' : 'danger'}
+          isPending={actionInProgressId === confirmAction.id}
+          details={[
+            { label: 'Amount', value: formatMoney(confirmAction.request.amount, confirmAction.request.currency) },
+            { label: 'Action', value: confirmAction.request.action },
+            { label: 'Target Resource', value: confirmAction.request.resource_id },
+            { label: 'Agent', value: confirmAction.request.agent_name || confirmAction.request.agent_id },
+          ]}
+          onConfirm={handleExecuteAction}
+          onCancel={() => !actionInProgressId && setConfirmAction(null)}
+        />
       )}
 
-      {approvals.length === 0 ? (
-        <div className="bg-[#111] border border-gray-800 rounded-lg p-8 text-center text-gray-500">
-          No pending approvals at this time.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '32px' }}>
+        <div>
+          <h1 style={{ marginBottom: '8px' }}>Human Approval Workflow</h1>
+          <p style={{ color: 'var(--text-muted)', margin: 0 }}>Review and authorize high-impact actions exceeding agent autonomy thresholds.</p>
         </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '4px', border: '1px solid var(--border-color)' }}>
+            <button
+              className="btn"
+              onClick={() => setStatusFilter('PENDING')}
+              style={{
+                padding: '6px 14px',
+                fontSize: '0.85rem',
+                background: statusFilter === 'PENDING' ? 'var(--accent-color)' : 'transparent',
+                color: statusFilter === 'PENDING' ? '#fff' : 'var(--text-muted)',
+              }}
+            >
+              Pending Inbox
+            </button>
+            <button
+              className="btn"
+              onClick={() => setStatusFilter('ALL')}
+              style={{
+                padding: '6px 14px',
+                fontSize: '0.85rem',
+                background: statusFilter === 'ALL' ? 'var(--accent-color)' : 'transparent',
+                color: statusFilter === 'ALL' ? '#fff' : 'var(--text-muted)',
+              }}
+            >
+              All History
+            </button>
+          </div>
+
+          <button
+            className="btn"
+            onClick={() => fetchApprovalList(true)}
+            disabled={isRefreshing}
+            style={{ padding: '8px 14px', fontSize: '0.85rem', background: 'rgba(255,255,255,0.05)', color: 'var(--text-main)' }}
+            aria-label="Refresh approvals list"
+          >
+            <RefreshCw size={14} className={isRefreshing ? 'spin-animation' : ''} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: '40px', color: 'var(--text-muted)', textAlign: 'center' }}>Loading approvals queue...</div>
+      ) : approvals.length === 0 ? (
+        <EmptyState
+          title={statusFilter === 'PENDING' ? 'No pending approvals' : 'No approval records found'}
+          description={statusFilter === 'PENDING' ? 'All autonomous agent transactions are within limits or already resolved.' : 'No transactions have triggered dual-control escalation.'}
+          icon={<CheckCircle2 size={40} color="var(--success-color)" />}
+        />
       ) : (
-        <div className="grid gap-4">
-          {approvals.map((req) => (
-            <div key={req.id} className="bg-[#111] border border-gray-800 rounded-lg p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-gray-700 transition-colors">
-              <div className="space-y-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded bg-yellow-500/20 text-yellow-500 border border-yellow-500/30 uppercase">
-                    PENDING APPROVAL
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
-                  </span>
-                </div>
-                
-                <h3 className="text-xl font-medium text-white flex items-baseline gap-2">
-                  {req.action.replace('_', ' ')}
-                  <span className="text-2xl font-bold text-red-400">
-                    {new Intl.NumberFormat('en-IN', { style: 'currency', currency: req.currency }).format(req.amount)}
-                  </span>
-                </h3>
-                
-                <div className="text-sm text-gray-400 grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-1 mt-3">
-                  <div>
-                    <span className="text-gray-500">Agent:</span> <span className="font-mono text-gray-300">{req.agent_name}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {approvals.map((req) => {
+            const isItemPending = actionInProgressId === req.id;
+            const isRequestPending = req.status === 'PENDING';
+
+            return (
+              <div
+                key={req.id}
+                className="glass-panel"
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '20px',
+                  padding: '24px',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: '300px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                    {getStatusBadge(req.status)}
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Clock size={14} />
+                      {formatRelativeTime(new Date(req.created_at))} ({formatDateTime(req.created_at)})
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-gray-500">Target:</span> <span className="font-mono text-gray-300">{req.resource_id}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Resource:</span> <span className="font-mono text-gray-300">{req.resource_type}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Req ID:</span> <span className="font-mono text-gray-500">{req.id.substring(0,8)}...</span>
-                  </div>
-                  {req.parent_request_id && (
+
+                  <h3 style={{ fontSize: '1.4rem', margin: '4px 0 12px 0', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <span>{req.action.replace(/_/g, ' ')}</span>
+                    <span style={{ color: 'var(--warning-color)', fontWeight: 700 }}>
+                      {formatMoney(req.amount, req.currency)}
+                    </span>
+                  </h3>
+
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      gap: '8px 16px',
+                      fontSize: '0.85rem',
+                      background: 'rgba(0, 0, 0, 0.2)',
+                      padding: '12px 16px',
+                      borderRadius: '8px',
+                    }}
+                  >
                     <div>
-                      <span className="text-gray-500">Parent:</span> <span className="font-mono text-gray-500">{req.parent_request_id.substring(0,8)}...</span>
+                      <span style={{ color: 'var(--text-muted)' }}>Agent: </span>
+                      <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{req.agent_name || req.agent_id}</span>
                     </div>
-                  )}
-                  {req.decision_attempt !== undefined && req.decision_attempt > 1 && (
                     <div>
-                      <span className="text-gray-500">Attempt:</span> <span className="font-mono text-gray-500">{req.decision_attempt}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>Target: </span>
+                      <span style={{ fontFamily: 'monospace', color: 'var(--text-main)' }}>{req.resource_id}</span>
                     </div>
-                  )}
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Resource Type: </span>
+                      <span style={{ color: 'var(--text-main)' }}>{req.resource_type}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Request ID: </span>
+                      <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{req.id.substring(0, 8)}...</span>
+                    </div>
+                    {req.parent_request_id && (
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Lineage Parent: </span>
+                        <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{req.parent_request_id.substring(0, 8)}...</span>
+                      </div>
+                    )}
+                    {req.decision_attempt !== undefined && req.decision_attempt !== null && req.decision_attempt > 1 && (
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Attempt: </span>
+                        <span style={{ color: 'var(--warning-color)' }}>{req.decision_attempt}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {isRequestPending && (
+                  <div style={{ display: 'flex', gap: '12px', minWidth: '220px' }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => handleOpenConfirm(req, 'deny')}
+                      disabled={isItemPending}
+                      style={{
+                        flex: 1,
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        color: 'var(--danger-color)',
+                      }}
+                    >
+                      <XCircle size={16} />
+                      {isItemPending ? 'Processing...' : 'Deny'}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => handleOpenConfirm(req, 'approve')}
+                      disabled={isItemPending}
+                      style={{ flex: 1 }}
+                    >
+                      <CheckCircle2 size={16} />
+                      {isItemPending ? 'Processing...' : 'Approve'}
+                    </button>
+                  </div>
+                )}
               </div>
-              
-              <div className="flex w-full md:w-auto gap-3 shrink-0">
-                <button
-                  onClick={() => handleAction(req.id, 'deny')}
-                  className="flex-1 md:flex-none px-4 py-2 border border-red-500/30 text-red-400 hover:bg-red-500/10 rounded font-medium transition-colors"
-                >
-                  Deny
-                </button>
-                <button
-                  onClick={() => handleAction(req.id, 'approve')}
-                  className="flex-1 md:flex-none px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded font-medium transition-colors"
-                >
-                  Approve
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
