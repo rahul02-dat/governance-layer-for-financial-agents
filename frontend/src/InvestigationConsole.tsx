@@ -20,7 +20,7 @@ const InvestigationConsole = () => {
   const fetchEvents = async () => {
     try {
       const skip = (page - 1) * limit;
-      let url = `/audit-events/?skip=${skip}&limit=${limit}`;
+      let url = `/audit-events?skip=${skip}&limit=${limit}`;
       
       if (filters.decision) url += `&decision=${filters.decision}`;
       if (filters.action) url += `&action=${filters.action}`;

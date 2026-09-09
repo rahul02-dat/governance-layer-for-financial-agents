@@ -14,7 +14,7 @@ const FleetOverview = () => {
         axios.get('/analytics/overview'),
         axios.get('/analytics/denials'),
         axios.get('/analytics/agents'),
-        axios.get('/audit-events/?limit=5'),
+        axios.get('/audit-events?limit=5'),
         axios.get('/fleet/status')
       ]);
       
