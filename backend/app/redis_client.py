@@ -6,15 +6,24 @@ redis_client = redis.from_url(settings.redis_url, decode_responses=True)
 
 # Lua script for atomic multi-budget decrement
 # KEYS: List of Budget keys
-# ARGV: List of Requested amounts (corresponding to KEYS)
+# ARGV: [requested_1, ..., requested_N, limit_1, ..., limit_N]
 # Returns: 1 if successful, 0 if any budget is exceeded
 BUDGET_CONSUME_SCRIPT = """
--- First pass: check if all budgets have enough capacity
+-- First pass: initialize missing budgets and check capacity
 for i, key in ipairs(KEYS) do
+    local requested = tonumber(ARGV[i])
+    local limit = tonumber(ARGV[i + #KEYS])
+    
     local current = redis.call('GET', key)
+    if not current then
+        if limit >= 0 then
+            redis.call('SET', key, limit)
+            current = limit
+        end
+    end
+    
     if current then
         local remaining = tonumber(current)
-        local requested = tonumber(ARGV[i])
         if remaining < requested then
             return 0 -- Budget exceeded
         end
@@ -53,13 +62,23 @@ def get_agent_status(agent_id: str) -> str:
         # Fail closed
         return "REVOKED"
 
-def reserve_budgets(budgets: dict[str, Decimal]) -> bool:
+def reserve_budgets(budgets: dict) -> bool:
+    """
+    budgets expected format:
+    { "key1": {"request": Decimal, "limit": Decimal}, ... }
+    """
     if not budgets:
         return True
     
     keys = list(budgets.keys())
-    args = [int(amount * 100) for amount in budgets.values()]
-    
+    args = []
+    # Add requests
+    for key in keys:
+        args.append(int(budgets[key]["request"] * 100))
+    # Add limits
+    for key in keys:
+        args.append(int(budgets[key]["limit"] * 100))
+        
     try:
         res = budget_consume(keys=keys, args=args)
         return res == 1
@@ -67,22 +86,27 @@ def reserve_budgets(budgets: dict[str, Decimal]) -> bool:
         # Fail closed
         return False
 
-def check_budgets(budgets: dict[str, Decimal]) -> bool:
+def check_budgets(budgets: dict) -> bool:
+    """
+    budgets expected format:
+    { "key1": {"request": Decimal, "limit": Decimal}, ... }
+    """
     if not budgets:
         return True
     
     keys = list(budgets.keys())
-    args = [int(amount * 100) for amount in budgets.values()]
     
     try:
         current_values = redis_client.mget(keys)
         for i, val in enumerate(current_values):
-            if val is not None and int(val) < args[i]:
+            limit_cents = int(budgets[keys[i]]["limit"] * 100)
+            request_cents = int(budgets[keys[i]]["request"] * 100)
+            
+            # If not initialized, assume limit
+            available = int(val) if val is not None else limit_cents
+            if available < request_cents:
                 return False
         return True
     except redis.RedisError:
         # Fail closed
         return False
-
-def initialize_budget(budget_key: str, amount: Decimal):
-    redis_client.set(budget_key, int(amount * 100))

@@ -52,7 +52,30 @@ class QuarantineService:
         Applies Kubernetes network isolation or scales the deployment to 0.
         This isolates the workload infrastructure-side.
         """
-        # Placeholder for actual K8s client usage
-        # E.g., client.AppsV1Api().patch_namespaced_deployment_scale(...)
-        print(f"Applying Kubernetes containment for {agent_id}")
-        pass
+        try:
+            from kubernetes import client, config
+            
+            # Load in-cluster config or fallback to kubeconfig for local dev
+            try:
+                config.load_incluster_config()
+            except config.config_exception.ConfigException:
+                config.load_kube_config()
+                
+            v1 = client.AppsV1Api()
+            namespace = "agentguard"
+            
+            # Assume deployment name is the agent_id
+            deployment_name = agent_id
+            
+            print(f"[QuarantineService] Scaling deployment {deployment_name} in {namespace} to 0")
+            
+            # Read existing scale
+            scale = v1.read_namespaced_deployment_scale(name=deployment_name, namespace=namespace)
+            
+            # Set scale to 0
+            scale.spec.replicas = 0
+            v1.replace_namespaced_deployment_scale(name=deployment_name, namespace=namespace, body=scale)
+            
+        except Exception as e:
+            # Re-raise so QuarantineService logs the failure but still commits the DB transaction
+            raise RuntimeError(f"Kubernetes API error: {str(e)}")

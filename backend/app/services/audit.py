@@ -54,13 +54,15 @@ class AuditService:
         Creates an audit event with SHA-256 hash chaining, persisting it atomically.
         """
         # We need a table-level lock or explicit serialization to ensure strictly sequential chaining.
-        # For this implementation, we fetch the latest event to get its hash.
-        # In a high-concurrency setup, this would be inside a serializable transaction.
+        from app.models import AuditChainHead
         
-        # Lock the latest row for update to ensure strict chaining
-        latest_event = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc(), AuditEvent.id.desc()).with_for_update().first()
-        
-        previous_hash = latest_event.event_hash if latest_event else "GENESIS"
+        head = db.query(AuditChainHead).filter(AuditChainHead.id == 1).with_for_update().first()
+        if not head:
+            head = AuditChainHead(id=1, last_event_id=None, last_event_hash="GENESIS")
+            db.add(head)
+            db.flush()
+            
+        previous_hash = head.last_event_hash
         
         event_data = {
             "event_type": event_type,
@@ -108,6 +110,12 @@ class AuditService:
         )
         
         db.add(audit_event)
+        
+        # Ensure we have the ID before assigning (if it's generated on insert, flush first)
+        # However, uuid is generated client-side by our default function
+        head.last_event_id = audit_event.id
+        head.last_event_hash = event_hash
+        
         # Flush to DB to ensure the row exists and locks are held until transaction commit
         db.flush()
         

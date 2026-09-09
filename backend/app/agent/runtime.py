@@ -16,14 +16,31 @@ class ExecutionGateway:
     def __init__(self, base_url: str):
         self.base_url = base_url
 
-    def execute_transfer(self, source_account: str, target_account: str, amount: Decimal, currency: str, auth_id: str) -> Dict[str, Any]:
-        # Execution bypass test: we must ensure auth_id is valid for this exact payload
-        # Wait, the ExecutionGateway would query the Audit logs to verify the auth_id in a real system.
-        # Since we don't have a direct query for it yet, we simulate the verification.
-        # In a real system, the Execution Gateway will not trust the agent.
-        print(f"[ExecutionGateway] Verifying auth_id {auth_id} for {amount} {currency} from {source_account} to {target_account}")
+    def execute_transfer(self, source_account: str, target_account: str, amount: Decimal, currency: str, auth_id: str, agent_id: str) -> Dict[str, Any]:
+        print(f"[ExecutionGateway] Verifying auth_id {auth_id} independently...")
         
-        # Simulate successful execution
+        verify_payload = {
+            "authorization_id": auth_id,
+            "agent_id": agent_id,
+            "action": "CREATE_PAYMENT",
+            "resource_type": "corporate_account",
+            "resource_id": source_account,
+            "amount": float(amount),
+            "currency": currency
+        }
+        
+        try:
+            resp = httpx.post(f"{self.base_url}/execution/verify", json=verify_payload)
+            resp.raise_for_status()
+            print(f"[ExecutionGateway] Verification SUCCESS. Executing {amount} {currency} from {source_account} to {target_account}")
+        except httpx.HTTPStatusError as e:
+            error_detail = e.response.json().get("detail", str(e))
+            print(f"[ExecutionGateway] Verification FAILED: {error_detail}")
+            return {
+                "status": "FAILED",
+                "message": f"Execution rejected by gateway: {error_detail}"
+            }
+            
         return {
             "status": "SUCCESS",
             "transaction_id": f"txn_{int(time.time())}",
@@ -83,7 +100,8 @@ class AgentRuntime:
                             args["target_account"],
                             Decimal(str(args["amount"])),
                             args["currency"],
-                            auth_id
+                            auth_id,
+                            self.agent_id
                         )
                         return {"status": "SUCCESS", "execution_result": result}
                     

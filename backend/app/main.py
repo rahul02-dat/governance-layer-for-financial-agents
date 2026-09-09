@@ -3,7 +3,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import get_db
 from app import redis_client
-from app.routers import agents, policies, budgets, fleet, authorize, audit, analytics, approvals
+from app.routers import agents, policies, budgets, fleet, authorize, audit, analytics, approvals, execution
 
 app = FastAPI(
     title="AgentGuard API",
@@ -19,6 +19,7 @@ app.include_router(authorize.router)
 app.include_router(audit.router)
 app.include_router(analytics.router)
 app.include_router(approvals.router)
+app.include_router(execution.router)
 
 @app.get("/health")
 def health_check():

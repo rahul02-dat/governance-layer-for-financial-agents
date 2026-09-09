@@ -46,14 +46,24 @@ class AuthorizationService:
                     raise ValueError("IDEMPOTENCY_CONFLICT: A different request with this request_id was already processed.")
 
         # 1. Fetch Fleet Status
-        fleet_status = AgentStateService.get_fleet_status()
+        try:
+            fleet_status = AgentStateService.get_fleet_status()
+        except Exception as e:
+            record_trace("2. Fleet State", "FAIL")
+            return AuthorizationService._deny(db, request_data, "INFRASTRUCTURE_FAILURE", f"Fleet state unavailable: {str(e)}", start_time, trace, simulate)
+            
         if fleet_status != "ACTIVE":
             record_trace("2. Fleet State", "FAIL")
             return AuthorizationService._deny(db, request_data, "FLEET_HALTED", "Fleet is halted", start_time, trace, simulate)
         record_trace("2. Fleet State", "PASS")
 
         # 2. Fetch Agent Status
-        agent_status = AgentStateService.get_agent_status(db, request_data["agent_id"])
+        try:
+            agent_status = AgentStateService.get_agent_status(db, request_data["agent_id"])
+        except Exception as e:
+            record_trace("3. Agent State", "FAIL")
+            return AuthorizationService._deny(db, request_data, "INFRASTRUCTURE_FAILURE", f"Agent state unavailable: {str(e)}", start_time, trace, simulate)
+            
         if not agent_status:
             record_trace("3. Agent State", "FAIL")
             return AuthorizationService._deny(db, request_data, "AGENT_NOT_FOUND", "No such agent", start_time, trace, simulate)
@@ -62,10 +72,14 @@ class AuthorizationService:
             return AuthorizationService._deny(db, request_data, "AGENT_REVOKED", "Agent is revoked or quarantined", start_time, trace, simulate)
         record_trace("3. Agent State", "PASS")
 
-        record_trace("4. Permission", "PASS") # Implicitly evaluated by OPA
-
         # 3. Evaluate OPA policy
-        permissions = PermissionService.get_agent_permissions(db, request_data["agent_id"])
+        try:
+            permissions = PermissionService.get_agent_permissions(db, request_data["agent_id"])
+            record_trace("4. Permission Context", "RESOLVED")
+        except Exception as e:
+            record_trace("4. Permission Context", "FAIL")
+            return AuthorizationService._deny(db, request_data, "INFRASTRUCTURE_FAILURE", f"Permission context unavailable: {str(e)}", start_time, trace, simulate)
+            
         opa_input = {
             "fleet_state": fleet_status,
             "agent_status": agent_status,
@@ -90,9 +104,14 @@ class AuthorizationService:
 
         # 4. Evaluate Approval Threshold
         if not skip_approval_check:
-            approval_threshold = PermissionService.get_approval_threshold(
-                db, request_data["agent_id"], request_data["action"], request_data["resource_type"]
-            )
+            try:
+                approval_threshold = PermissionService.get_approval_threshold(
+                    db, request_data["agent_id"], request_data["action"], request_data["resource_type"]
+                )
+            except Exception as e:
+                record_trace("6. Approval", "FAIL")
+                return AuthorizationService._deny(db, request_data, "INFRASTRUCTURE_FAILURE", f"Approval threshold unavailable: {str(e)}", start_time, trace, simulate)
+                
             if approval_threshold is not None and request_data["amount"] > approval_threshold:
                 record_trace("6. Approval", "PENDING")
                 if not simulate:

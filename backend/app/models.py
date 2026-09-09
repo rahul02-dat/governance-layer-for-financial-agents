@@ -69,8 +69,13 @@ class Budget(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+from sqlalchemy import UniqueConstraint, Index
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
+    __table_args__ = (
+        Index('ix_audit_auth_decision', 'request_id', unique=True, postgresql_where=(Column('event_type') == 'AUTHORIZATION_DECISION')),
+    )
 
     id = Column(String, primary_key=True, default=generate_uuid)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
@@ -103,6 +108,9 @@ class ApprovalRequest(Base):
     amount = Column(Numeric(18, 2), nullable=False)
     currency = Column(String, nullable=False)
     request_id = Column(String, nullable=True)
+    parent_request_id = Column(String, nullable=True)
+    parent_authorization_id = Column(String, nullable=True)
+    decision_attempt = Column(Integer, default=1)
     status = Column(String, default="PENDING") # PENDING, APPROVED, DENIED
     policy_id = Column(String, nullable=True)
     operator_id = Column(String, nullable=True)
@@ -110,3 +118,10 @@ class ApprovalRequest(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     agent = relationship("Agent")
+
+class AuditChainHead(Base):
+    __tablename__ = "audit_chain_head"
+
+    id = Column(Integer, primary_key=True)
+    last_event_id = Column(String, nullable=True)
+    last_event_hash = Column(String, nullable=True)

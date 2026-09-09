@@ -46,23 +46,24 @@ def test_concurrent_budget_reservations(db: Session, monkeypatch):
     request_amount = Decimal("15.00")
     num_requests = 100
     
-    # Mock models and redis for budget
     fleet_budget_key = "agentguard:budget:fleet:daily"
     
     success_count = 0
     failure_count = 0
     
-    # Mock redis budget logic with in-memory dict and thread lock
     in_memory_budget = {fleet_budget_key: budget_limit}
     redis_lock = threading.Lock()
     
     def mock_reserve(budgets):
         with redis_lock:
-            for k, v in budgets.items():
-                if in_memory_budget.get(k, Decimal("0.00")) < v:
+            # format is {key: {"request": req_amt, "limit": limit_amt}}
+            for k, details in budgets.items():
+                if in_memory_budget.get(k, details["limit"]) < details["request"]:
                     return False
-            for k, v in budgets.items():
-                in_memory_budget[k] -= v
+            for k, details in budgets.items():
+                if k not in in_memory_budget:
+                    in_memory_budget[k] = details["limit"]
+                in_memory_budget[k] -= details["request"]
             return True
 
     monkeypatch.setattr("app.redis_client.reserve_budgets", mock_reserve)
@@ -70,11 +71,10 @@ def test_concurrent_budget_reservations(db: Session, monkeypatch):
     
     def make_request():
         nonlocal success_count, failure_count
-        # Each thread uses a new DB session if necessary, but here we just mock the DB call 
-        # inside reserve_budgets since the budget logic is entirely in Redis.
         try:
-            # We don't need a real db session because fleet_budget_key is already in Redis
-            success = redis_client.reserve_budgets({fleet_budget_key: request_amount})
+            success = redis_client.reserve_budgets({
+                fleet_budget_key: {"request": request_amount, "limit": budget_limit}
+            })
             if success:
                 success_count += 1
             else:
@@ -95,15 +95,13 @@ def test_concurrent_budget_reservations(db: Session, monkeypatch):
     assert success_count == 66
     assert failure_count == 34
     
-    remaining_budget = redis_client.redis_client.get(fleet_budget_key)
-    assert Decimal(remaining_budget.decode()) == budget_limit - (success_count * request_amount)
+    remaining_budget = Decimal(in_memory_budget[fleet_budget_key])
+    assert remaining_budget == budget_limit - (success_count * request_amount)
 
 def test_approval_race_condition(db: Session, monkeypatch):
     """
     Test that approving a pending request correctly re-evaluates governance constraints.
-    We mock PolicyService to allow initially, then mock a policy change or agent revoke.
     """
-    # Create the pending approval
     req_data = {
         "agent_id": "agent_race_test",
         "action": "TRANSFER",
@@ -117,15 +115,12 @@ def test_approval_race_condition(db: Session, monkeypatch):
     req = ApprovalService.create_pending_approval(db, req_data)
     db.commit()
     
-    # We will simulate that the fleet is halted while the request is pending.
     monkeypatch.setattr("app.services.agent_state.AgentStateService.get_fleet_status", lambda: "HALTED")
     monkeypatch.setattr("app.services.policy.PolicyService.evaluate_authorization", lambda input: {"allowed": True})
     monkeypatch.setattr("app.services.budget.BudgetService.reserve_budgets", lambda db, a, b, c: True)
     
-    # Try to re-evaluate
     auth_result = AuthorizationService.evaluate_request(db, req_data, simulate=False, skip_approval_check=True)
     
-    # It must be denied because the fleet was halted between PENDING and APPROVE
     assert auth_result["decision"] == "DENY"
     assert auth_result["reason"] == "FLEET_HALTED"
 
@@ -149,8 +144,63 @@ def test_failure_injection_opa_down(db: Session, monkeypatch):
         
     monkeypatch.setattr("app.services.policy.PolicyService.evaluate_authorization", mock_evaluate)
     
-    # Must fail closed
     auth_result = AuthorizationService.evaluate_request(db, req_data, simulate=False)
     assert auth_result["decision"] == "DENY"
     assert "POLICY_EVALUATION_FAILED" in auth_result["reason"]
+
+def test_kubernetes_containment(db: Session, monkeypatch):
+    from app.services.quarantine import QuarantineService
+    
+    # Mock AgentStateService to return True
+    monkeypatch.setattr("app.services.agent_state.AgentStateService.update_agent_status", lambda db, a, s: True)
+    
+    # Mock Kubernetes API
+    class MockScale:
+        class Spec:
+            replicas = 1
+        spec = Spec()
+        
+    mock_scale = MockScale()
+    
+    class MockV1Api:
+        def read_namespaced_deployment_scale(self, name, namespace):
+            return mock_scale
+        def replace_namespaced_deployment_scale(self, name, namespace, body):
+            mock_scale.spec.replicas = body.spec.replicas
+            return mock_scale
+            
+    monkeypatch.setattr("kubernetes.client.AppsV1Api", MockV1Api)
+    monkeypatch.setattr("kubernetes.config.load_incluster_config", lambda: None)
+    
+    result = QuarantineService.quarantine_agent(db, "agent_123", "SUSPICIOUS_ACTIVITY")
+    
+    assert result is True
+    # The deployment should have been scaled to 0
+    assert mock_scale.spec.replicas == 0
+
+def test_kubernetes_containment_failure(db: Session, monkeypatch):
+    from app.services.quarantine import QuarantineService
+    
+    # Mock AgentStateService to return True
+    monkeypatch.setattr("app.services.agent_state.AgentStateService.update_agent_status", lambda db, a, s: True)
+    
+    def mock_init(*args, **kwargs):
+        raise Exception("API Server Unreachable")
+        
+    monkeypatch.setattr("kubernetes.config.load_incluster_config", mock_init)
+    
+    # It should NOT raise the API error because AgentGuard catches it to persist the local REVOKED state
+    result = QuarantineService.quarantine_agent(db, "agent_123", "SUSPICIOUS_ACTIVITY")
+    
+    assert result is True
+    
+    # Verify the audit event contains the failure reason
+    from app.models import AuditEvent
+    event = db.query(AuditEvent).filter(
+        AuditEvent.event_type == "AGENT_QUARANTINED",
+        AuditEvent.agent_id == "agent_123"
+    ).order_by(AuditEvent.id.desc()).first()
+    
+    assert event is not None
+    assert "Kubernetes containment failed" in event.reason
 

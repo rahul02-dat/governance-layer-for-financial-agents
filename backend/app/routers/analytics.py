@@ -93,39 +93,31 @@ def get_denials(db: Session = Depends(get_db)):
 
 @router.get("/agents")
 def get_agent_health(db: Session = Depends(get_db)):
-    # For each agent, we need their name, total requests, deny %, and blocked amount.
-    agents = db.query(models.Agent).all()
-    health_data = []
-
-    for agent in agents:
-        total_reqs = db.query(models.AuditEvent).filter(
-            models.AuditEvent.agent_id == agent.id,
-            models.AuditEvent.event_type == "AUTHORIZATION_DECISION"
-        ).count()
-        
-        denied_reqs = db.query(models.AuditEvent).filter(
-            models.AuditEvent.agent_id == agent.id,
-            models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-            models.AuditEvent.decision == "DENY"
-        ).count()
-
-        blocked_val = db.query(func.sum(models.AuditEvent.amount)).filter(
-            models.AuditEvent.agent_id == agent.id,
-            models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-            models.AuditEvent.decision == "DENY"
-        ).scalar() or 0.0
-
-        deny_rate = (denied_reqs / total_reqs * 100) if total_reqs > 0 else 0
-
-        if total_reqs > 0:
-            health_data.append({
-                "agent_id": agent.id,
-                "agent_name": agent.name,
-                "requests": total_reqs,
-                "deny_percent": round(deny_rate, 2),
-                "blocked_value": blocked_val
-            })
+    from sqlalchemy import case
     
-    # Sort by blocked_value descending or requests descending
+    # We want total_requests, denied_requests, blocked_value grouped by agent_id
+    stats = db.query(
+        models.Agent.id,
+        models.Agent.name,
+        func.count(models.AuditEvent.id).label("total_reqs"),
+        func.sum(case((models.AuditEvent.decision == "DENY", 1), else_=0)).label("denied_reqs"),
+        func.sum(case((models.AuditEvent.decision == "DENY", models.AuditEvent.amount), else_=0)).label("blocked_val")
+    ).outerjoin(
+        models.AuditEvent, 
+        (models.Agent.id == models.AuditEvent.agent_id) & (models.AuditEvent.event_type == "AUTHORIZATION_DECISION")
+    ).group_by(models.Agent.id).all()
+
+    health_data = []
+    for stat in stats:
+        if stat.total_reqs > 0:
+            deny_rate = (stat.denied_reqs / stat.total_reqs * 100) if stat.total_reqs > 0 else 0
+            health_data.append({
+                "agent_id": stat.id,
+                "agent_name": stat.name,
+                "requests": stat.total_reqs,
+                "deny_percent": round(deny_rate, 2),
+                "blocked_value": float(stat.blocked_val or 0.0)
+            })
+            
     health_data.sort(key=lambda x: x["blocked_value"], reverse=True)
     return health_data

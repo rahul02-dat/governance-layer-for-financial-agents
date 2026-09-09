@@ -3,8 +3,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List
 
-# Using a hardcoded secret for Hackathon purposes, but normally this would be in env vars
-SECRET_KEY = "super-secret-governance-key"
+from app.config import settings
+
+# Secret key is now required from environment via settings
+SECRET_KEY = settings.jwt_secret
 ALGORITHM = "HS256"
 
 security = HTTPBearer()

@@ -110,11 +110,12 @@ def approve_request(approval_id: str, db: Session = Depends(get_db), current_use
         "resource_id": req.resource_id,
         "amount": req.amount,
         "currency": req.currency,
-        # We don't reuse request_id to avoid idempotency returning PENDING again
-        "request_id": f"approved_{req.request_id}" if req.request_id else None
+        "request_id": None, # Will generate a new request_id for the execution
     }
     
-    # Re-evaluate (this creates its own ALLOW/DENY audit event and reserves budget)
+    # We maintain lineage by tracking the parent_request_id
+    parent_req_id = req.request_id
+    req.decision_attempt += 1
     auth_result = AuthorizationService.evaluate_request(db, request_data, simulate=False, skip_approval_check=True)
     
     if auth_result["decision"] == "DENY":

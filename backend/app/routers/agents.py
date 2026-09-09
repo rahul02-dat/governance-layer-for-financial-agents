@@ -113,6 +113,9 @@ def invoke_agent(agent_id: str, request: AgentInvokeRequest, db: Session = Depen
     from app.agent.runtime import AgentRuntime
     from app.auth import create_access_token
     
+    if current_user.get("role") == "AGENT" and current_user.get("sub") != agent_id:
+        raise HTTPException(status_code=403, detail="Agent impersonation is not allowed")
+    
     agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")

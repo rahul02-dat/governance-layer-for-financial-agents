@@ -1,8 +1,8 @@
-"""Initial migration
+"""Initial schema
 
-Revision ID: ae057ba55dfd
+Revision ID: e0f6638b250c
 Revises: 
-Create Date: 2026-09-01 01:53:11.912081
+Create Date: 2026-09-09 11:09:48.234322
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'ae057ba55dfd'
+revision: str = 'e0f6638b250c'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -30,6 +30,12 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_table('audit_chain_head',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('last_event_id', sa.String(), nullable=True),
+    sa.Column('last_event_hash', sa.String(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
     op.create_table('audit_events',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('timestamp', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
@@ -38,21 +44,26 @@ def upgrade() -> None:
     sa.Column('action', sa.String(), nullable=True),
     sa.Column('resource_type', sa.String(), nullable=True),
     sa.Column('resource_id', sa.String(), nullable=True),
-    sa.Column('amount', sa.Float(), nullable=True),
+    sa.Column('amount', sa.Numeric(precision=18, scale=2), nullable=True),
     sa.Column('currency', sa.String(), nullable=True),
     sa.Column('decision', sa.String(), nullable=True),
     sa.Column('reason', sa.String(), nullable=True),
     sa.Column('policy_id', sa.String(), nullable=True),
     sa.Column('operator_id', sa.String(), nullable=True),
     sa.Column('request_id', sa.String(), nullable=True),
-    sa.Column('latency_ms', sa.Float(), nullable=True),
+    sa.Column('authorization_id', sa.String(), nullable=True),
+    sa.Column('policy_version', sa.Integer(), nullable=True),
+    sa.Column('latency_ms', sa.Integer(), nullable=True),
+    sa.Column('previous_hash', sa.String(), nullable=True),
+    sa.Column('event_hash', sa.String(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_index('ix_audit_auth_decision', 'audit_events', ['request_id'], unique=True, postgresql_where=sa.text("event_type = 'AUTHORIZATION_DECISION'"))
     op.create_table('budgets',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('scope', sa.String(), nullable=False),
     sa.Column('target_id', sa.String(), nullable=True),
-    sa.Column('limit_amount', sa.Float(), nullable=False),
+    sa.Column('limit_amount', sa.Numeric(precision=18, scale=2), nullable=False),
     sa.Column('currency', sa.String(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
@@ -61,7 +72,6 @@ def upgrade() -> None:
     op.create_table('policies',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
-    sa.Column('rego_content', sa.String(), nullable=False),
     sa.Column('enabled', sa.Boolean(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
@@ -74,10 +84,40 @@ def upgrade() -> None:
     sa.Column('resource_type', sa.String(), nullable=False),
     sa.Column('allowed_accounts', sa.JSON(), nullable=True),
     sa.Column('allowed_currencies', sa.JSON(), nullable=True),
-    sa.Column('max_amount', sa.Float(), nullable=True),
-    sa.Column('requires_approval_above', sa.Float(), nullable=True),
+    sa.Column('max_amount', sa.Numeric(precision=18, scale=2), nullable=True),
+    sa.Column('requires_approval_above', sa.Numeric(precision=18, scale=2), nullable=True),
     sa.Column('enabled', sa.Boolean(), nullable=True),
     sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('approval_requests',
+    sa.Column('id', sa.String(), nullable=False),
+    sa.Column('agent_id', sa.String(), nullable=False),
+    sa.Column('action', sa.String(), nullable=False),
+    sa.Column('resource_type', sa.String(), nullable=False),
+    sa.Column('resource_id', sa.String(), nullable=False),
+    sa.Column('amount', sa.Numeric(precision=18, scale=2), nullable=False),
+    sa.Column('currency', sa.String(), nullable=False),
+    sa.Column('request_id', sa.String(), nullable=True),
+    sa.Column('parent_request_id', sa.String(), nullable=True),
+    sa.Column('parent_authorization_id', sa.String(), nullable=True),
+    sa.Column('decision_attempt', sa.Integer(), nullable=True),
+    sa.Column('status', sa.String(), nullable=True),
+    sa.Column('policy_id', sa.String(), nullable=True),
+    sa.Column('operator_id', sa.String(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
+    sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('policy_versions',
+    sa.Column('id', sa.String(), nullable=False),
+    sa.Column('policy_id', sa.String(), nullable=False),
+    sa.Column('version_number', sa.Integer(), nullable=False),
+    sa.Column('rego_content', sa.String(), nullable=False),
+    sa.Column('content_hash', sa.String(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.ForeignKeyConstraint(['policy_id'], ['policies.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     # ### end Alembic commands ###
@@ -85,9 +125,13 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_table('policy_versions')
+    op.drop_table('approval_requests')
     op.drop_table('agent_permissions')
     op.drop_table('policies')
     op.drop_table('budgets')
+    op.drop_index('ix_audit_auth_decision', table_name='audit_events', postgresql_where=sa.text("event_type = 'AUTHORIZATION_DECISION'"))
     op.drop_table('audit_events')
+    op.drop_table('audit_chain_head')
     op.drop_table('agents')
     # ### end Alembic commands ###
