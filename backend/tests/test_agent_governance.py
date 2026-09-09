@@ -31,17 +31,19 @@ def agent_token():
     return create_access_token({"sub": "agent-123", "role": "AGENT"})
 
 def test_execution_bypass_rejected(admin_token):
-    # Attempting to call the ExecutionGateway directly without a valid auth_id
-    from app.agent.runtime import ExecutionGateway
-    from decimal import Decimal
-    
-    gateway = ExecutionGateway("http://localhost:8000")
-    
-    # Normally the ExecutionGateway would throw if auth_id doesn't match the audit log.
-    # We will simulate this by checking if the auth_id is valid in the DB.
-    # Since we mocked it for the demo to just return success, we will write a note that 
-    # the real implementation MUST query the AuditEvent table to verify the auth_id.
-    pass
+    # Attempting to call the Execution Gateway with a fabricated authorization ID must be rejected
+    resp = client.post("/api/execution/verify", json={
+        "authorization_id": "auth_fabricated_bypass_999",
+        "agent_id": "agent-123",
+        "action": "CREATE_PAYMENT",
+        "resource_type": "corporate_account",
+        "resource_id": "ACC-001",
+        "amount": 100.0,
+        "currency": "INR"
+    })
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Authorization not found"
+
 
 def test_budget_concurrency(db_session):
     # Fleet budget is 10000. 20 concurrent requests for 1000.

@@ -32,8 +32,14 @@ class AuthorizeResponse(BaseModel):
 
 @router.post("", response_model=AuthorizeResponse)
 def authorize_action(request: AuthorizeRequest, db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["AGENT", "ADMIN", "OPERATOR"]))):
+    if current_user.get("role") == "AGENT" and current_user.get("sub") != request.agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agent impersonation is not allowed: caller subject does not match requested agent_id"
+        )
     try:
         result = AuthorizationService.evaluate_request(db, request.model_dump(), request.simulate)
         return AuthorizeResponse(**result)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+

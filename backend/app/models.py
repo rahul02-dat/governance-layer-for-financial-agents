@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, JSON, Integer, Boolean, DateTime, ForeignKey, Numeric
+from sqlalchemy import Column, String, JSON, Integer, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -48,6 +48,10 @@ class Policy(Base):
 
 class PolicyVersion(Base):
     __tablename__ = "policy_versions"
+    __table_args__ = (
+        UniqueConstraint('policy_id', 'version_number', name='uq_policy_version'),
+        Index('ix_policy_version_policy_id', 'policy_id'),
+    )
 
     id = Column(String, primary_key=True, default=generate_uuid)
     policy_id = Column(String, ForeignKey("policies.id"), nullable=False)
@@ -69,15 +73,21 @@ class Budget(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-from sqlalchemy import UniqueConstraint, Index
-
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (
         Index('ix_audit_auth_decision', 'request_id', unique=True, postgresql_where=(Column('event_type') == 'AUTHORIZATION_DECISION')),
+        Index('ix_audit_events_request_id', 'request_id'),
+        Index('ix_audit_events_auth_id', 'authorization_id'),
+        Index('ix_audit_events_timestamp', 'timestamp'),
+        Index('ix_audit_events_agent_id', 'agent_id'),
+        Index('ix_audit_events_decision', 'decision'),
+        Index('ix_audit_events_reason', 'reason'),
+        Index('ix_audit_events_sequence_number', 'sequence_number'),
     )
 
     id = Column(String, primary_key=True, default=generate_uuid)
+    sequence_number = Column(Integer, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     event_type = Column(String, nullable=False)
     agent_id = Column(String, nullable=True)
@@ -99,6 +109,10 @@ class AuditEvent(Base):
 
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
+    __table_args__ = (
+        Index('ix_approval_status', 'status'),
+        Index('ix_approval_request_id', 'request_id'),
+    )
 
     id = Column(String, primary_key=True, default=generate_uuid)
     agent_id = Column(String, ForeignKey("agents.id"), nullable=False)
@@ -125,3 +139,24 @@ class AuditChainHead(Base):
     id = Column(Integer, primary_key=True)
     last_event_id = Column(String, nullable=True)
     last_event_hash = Column(String, nullable=True)
+    last_sequence_number = Column(Integer, default=0, nullable=True)
+
+class ExecutionAuthorization(Base):
+    __tablename__ = "execution_authorizations"
+    __table_args__ = (
+        Index('ix_exec_auth_agent_id', 'agent_id'),
+        Index('ix_exec_auth_status', 'status'),
+    )
+
+    id = Column(String, primary_key=True) # authorization_id
+    agent_id = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    resource_type = Column(String, nullable=False)
+    resource_id = Column(String, nullable=False)
+    amount = Column(Numeric(18, 2), nullable=False)
+    currency = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="ISSUED") # ISSUED, CONSUMED, EXPIRED, REVOKED
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+

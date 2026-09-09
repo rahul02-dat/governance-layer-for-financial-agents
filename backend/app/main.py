@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException, APIRouter
 from sqlalchemy import text
 from app.config import settings
 from app.database import get_db
@@ -26,16 +26,23 @@ api_router.include_router(approvals.router)
 api_router.include_router(execution.router)
 
 @api_router.get("/health")
-def health_check():
-    return {"status": "ok", "environment": settings.environment}
+def api_health_check():
+    return {"status": "ok"}
 
 @api_router.get("/dev/token")
 def get_dev_token():
+    if settings.environment.lower() != "development":
+        raise HTTPException(status_code=404, detail="Development endpoints are disabled outside development environment.")
     from app.auth import create_access_token
     token = create_access_token({"sub": "admin-hackathon", "role": "ADMIN"})
     return {"token": token}
 
 app.include_router(api_router)
+
+@app.get("/live")
+@app.get("/health")
+def liveness_check():
+    return {"status": "ok"}
 
 @app.get("/ready")
 def readiness_check(db = Depends(get_db)):
@@ -53,6 +60,7 @@ def readiness_check(db = Depends(get_db)):
         resp.raise_for_status()
         
         return {"status": "ready"}
-    except Exception as e:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail=f"Service unavailable: {str(e)}")
+    except Exception:
+        # Fail closed without leaking internal diagnostics or connection details
+        raise HTTPException(status_code=503, detail="Service unavailable")
+

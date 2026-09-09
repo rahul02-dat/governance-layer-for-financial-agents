@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from app.database import get_db
 from app import models
 from app.auth import RequireRole
@@ -12,48 +12,42 @@ router = APIRouter(
     dependencies=[Depends(RequireRole(["ADMIN", "OPERATOR", "AUDITOR"]))]
 )
 
+from decimal import Decimal
+
 @router.get("/overview")
 def get_overview(db: Session = Depends(get_db)):
-    # Agent stats
-    total_agents = db.query(models.Agent).count()
-    active_agents = db.query(models.Agent).filter(models.Agent.status == "ACTIVE").count()
-    revoked_agents = db.query(models.Agent).filter(models.Agent.status == "REVOKED").count()
+    # 1. Grouped query for Agent stats
+    agent_stats = db.query(
+        func.count(models.Agent.id).label("total"),
+        func.sum(case((models.Agent.status == "ACTIVE", 1), else_=0)).label("active"),
+        func.sum(case((models.Agent.status == "REVOKED", 1), else_=0)).label("revoked")
+    ).first()
 
-    # Request stats
-    total_requests = db.query(models.AuditEvent).filter(models.AuditEvent.event_type == "AUTHORIZATION_DECISION").count()
-    
-    allowed_requests = db.query(models.AuditEvent).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-        models.AuditEvent.decision == "ALLOW"
-    ).count()
-    
-    denied_requests = db.query(models.AuditEvent).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-        models.AuditEvent.decision == "DENY"
-    ).count()
+    total_agents = agent_stats.total or 0
+    active_agents = int(agent_stats.active or 0)
+    revoked_agents = int(agent_stats.revoked or 0)
 
-    pending_requests = db.query(models.AuditEvent).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-        models.AuditEvent.decision == "PENDING_APPROVAL"
-    ).count()
+    # 2. Grouped query for Request counts and monetary sums
+    decision_stats = db.query(
+        models.AuditEvent.decision,
+        func.count(models.AuditEvent.id).label("count"),
+        func.sum(models.AuditEvent.amount).label("total_amount")
+    ).filter(
+        models.AuditEvent.event_type == "AUTHORIZATION_DECISION"
+    ).group_by(models.AuditEvent.decision).all()
 
-    # Value stats
-    value_governed = db.query(func.sum(models.AuditEvent.amount)).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-        models.AuditEvent.decision == "ALLOW"
-    ).scalar() or 0.0
+    stats_map = {
+        row.decision: (row.count, Decimal(str(row.total_amount or 0)))
+        for row in decision_stats
+    }
 
-    value_blocked = db.query(func.sum(models.AuditEvent.amount)).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-        models.AuditEvent.decision == "DENY"
-    ).scalar() or 0.0
+    allowed_requests, value_allowed = stats_map.get("ALLOW", (0, Decimal("0.00")))
+    denied_requests, value_blocked = stats_map.get("DENY", (0, Decimal("0.00")))
+    pending_requests, pending_value = stats_map.get("PENDING_APPROVAL", (0, Decimal("0.00")))
 
-    pending_value = db.query(func.sum(models.AuditEvent.amount)).filter(
-        models.AuditEvent.event_type == "AUTHORIZATION_DECISION",
-        models.AuditEvent.decision == "PENDING_APPROVAL"
-    ).scalar() or 0.0
+    total_requests = allowed_requests + denied_requests + pending_requests
+    value_governed = value_allowed + value_blocked + pending_value
 
-    # Rates
     allow_rate = (allowed_requests / total_requests * 100) if total_requests > 0 else 0
     deny_rate = (denied_requests / total_requests * 100) if total_requests > 0 else 0
 
@@ -72,11 +66,13 @@ def get_overview(db: Session = Depends(get_db)):
             "deny_rate": round(deny_rate, 2)
         },
         "financial": {
-            "value_governed": value_governed,
-            "value_blocked": value_blocked,
-            "pending_value": pending_value
+            "value_governed": float(value_governed),
+            "value_allowed": float(value_allowed),
+            "value_blocked": float(value_blocked),
+            "pending_value": float(pending_value)
         }
     }
+
 
 @router.get("/denials")
 def get_denials(db: Session = Depends(get_db)):

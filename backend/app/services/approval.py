@@ -12,7 +12,8 @@ class ApprovalService:
             resource_id=request_data["resource_id"],
             amount=request_data["amount"],
             currency=request_data["currency"],
-            request_id=request_data["request_id"],
+            request_id=request_data.get("request_id"),
+            parent_request_id=request_data.get("request_id"),
             status="PENDING"
         )
         db.add(approval_req)

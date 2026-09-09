@@ -10,3 +10,28 @@ kind: ServiceAccount
 metadata:
   name: agentguard-sa
   namespace: agentguard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentguard-containment-role
+  namespace: agentguard
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/scale"]
+  verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentguard-containment-rolebinding
+  namespace: agentguard
+subjects:
+- kind: ServiceAccount
+  name: agentguard-sa
+  namespace: agentguard
+roleRef:
+  kind: Role
+  name: agentguard-containment-role
+  apiGroup: rbac.authorization.k8s.io
+

@@ -16,6 +16,7 @@ router = APIRouter(
 
 @router.get("", response_model=List[schemas.AgentResponse])
 def get_agents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    limit = min(max(limit, 1), 100)
     agents = db.query(models.Agent).offset(skip).limit(limit).all()
     return agents
 
@@ -119,6 +120,9 @@ def invoke_agent(agent_id: str, request: AgentInvokeRequest, db: Session = Depen
     agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+        
+    if agent.status != "ACTIVE":
+        raise HTTPException(status_code=403, detail=f"Agent is not active (status: {agent.status})")
         
     agent_token = create_access_token({"sub": agent_id, "role": "AGENT"})
     

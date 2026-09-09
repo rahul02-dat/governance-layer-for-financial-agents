@@ -1,8 +1,9 @@
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from sqlalchemy.orm import Session
-from app.models import AuditEvent
+from app.models import AuditEvent, ExecutionAuthorization
 from app.services.agent_state import AgentStateService
 from app.services.permission import PermissionService
 from app.services.policy import PolicyService
@@ -147,9 +148,22 @@ class AuthorizationService:
         record_trace("7. Budget", "PASS")
         record_trace("8. Final Decision", "ALLOW")
 
-        # 6. Allow
-        auth_id = f"auth_{int(time.time()*1000)}"
+        # 6. Allow: Generate collision-resistant UUID4 and persist ExecutionAuthorization
+        auth_id = f"auth_{uuid.uuid4().hex}"
+        expires_at_dt = datetime.now(timezone.utc) + timedelta(minutes=15)
         if not simulate:
+            exec_auth = ExecutionAuthorization(
+                id=auth_id,
+                agent_id=request_data["agent_id"],
+                action=request_data["action"],
+                resource_type=request_data["resource_type"],
+                resource_id=request_data["resource_id"],
+                amount=request_data["amount"],
+                currency=request_data["currency"],
+                status="ISSUED",
+                expires_at=expires_at_dt
+            )
+            db.add(exec_auth)
             AuditService.create_audit_event(
                 db=db,
                 event_type="AUTHORIZATION_DECISION",
@@ -170,9 +184,10 @@ class AuthorizationService:
         return {
             "decision": "ALLOW",
             "authorization_id": auth_id,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+            "expires_at": expires_at_dt.isoformat(),
             "trace": trace
         }
+
 
     @staticmethod
     def _deny(db: Session, request_data: dict, reason: str, details: str, start_time: float, trace: list, simulate: bool) -> dict:

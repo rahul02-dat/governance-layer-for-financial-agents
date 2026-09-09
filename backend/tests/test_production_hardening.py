@@ -199,7 +199,7 @@ def test_kubernetes_containment_failure(db: Session, monkeypatch):
     event = db.query(AuditEvent).filter(
         AuditEvent.event_type == "AGENT_QUARANTINED",
         AuditEvent.agent_id == "agent_123"
-    ).order_by(AuditEvent.id.desc()).first()
+    ).order_by(AuditEvent.sequence_number.desc()).first()
     
     assert event is not None
     assert "Kubernetes containment failed" in event.reason

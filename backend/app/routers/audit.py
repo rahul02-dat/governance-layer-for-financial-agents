@@ -18,6 +18,12 @@ class PaginatedAuditEvents(BaseModel):
     total: int
     items: List[dict] # We'll return dicts or we can rely on FastAPI serialization of ORM
 
+@router.get("/verify")
+def verify_audit_chain(db: Session = Depends(get_db), current_user: dict = Depends(RequireRole(["ADMIN", "AUDITOR"]))):
+    from app.services.audit import AuditService
+    result = AuditService.verify_chain(db)
+    return result
+
 @router.get("")
 def get_audit_events(
     skip: int = 0, 
@@ -30,6 +36,7 @@ def get_audit_events(
     request_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
+    limit = min(max(limit, 1), 100)
     query = db.query(models.AuditEvent)
     
     if agent_id:
@@ -49,3 +56,4 @@ def get_audit_events(
     events = query.order_by(models.AuditEvent.timestamp.desc()).offset(skip).limit(limit).all()
     
     return {"total": total, "items": events}
+

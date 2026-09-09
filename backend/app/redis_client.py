@@ -27,15 +27,14 @@ for i, key in ipairs(KEYS) do
         if remaining < requested then
             return 0 -- Budget exceeded
         end
+    else
+        return 0 -- Uninitialized without limit -> fail closed
     end
 end
 -- Second pass: decrement all budgets
 for i, key in ipairs(KEYS) do
-    local current = redis.call('GET', key)
-    if current then
-        local requested = tonumber(ARGV[i])
-        redis.call('DECRBY', key, requested)
-    end
+    local requested = tonumber(ARGV[i])
+    redis.call('DECRBY', key, requested)
 end
 return 1
 """
@@ -62,23 +61,39 @@ def get_agent_status(agent_id: str) -> str:
         # Fail closed
         return "REVOKED"
 
+def initialize_budget(key: str, amount: Decimal):
+    """
+    Initialize a budget in Redis using integer minor units (paise/cents).
+    """
+    amount_cents = int(Decimal(str(amount)) * 100)
+    redis_client.set(key, amount_cents)
+
 def reserve_budgets(budgets: dict) -> bool:
     """
     budgets expected format:
     { "key1": {"request": Decimal, "limit": Decimal}, ... }
+    or
+    { "key1": Decimal | int | float, ... }
     """
     if not budgets:
         return True
     
     keys = list(budgets.keys())
-    args = []
-    # Add requests
+    requests = []
+    limits = []
+    
     for key in keys:
-        args.append(int(budgets[key]["request"] * 100))
-    # Add limits
-    for key in keys:
-        args.append(int(budgets[key]["limit"] * 100))
+        val = budgets[key]
+        if isinstance(val, dict):
+            req = int(Decimal(str(val["request"])) * 100)
+            lim = int(Decimal(str(val["limit"])) * 100) if val.get("limit") is not None else -1
+        else:
+            req = int(Decimal(str(val)) * 100)
+            lim = -1
+        requests.append(req)
+        limits.append(lim)
         
+    args = requests + limits
     try:
         res = budget_consume(keys=keys, args=args)
         return res == 1
@@ -90,6 +105,8 @@ def check_budgets(budgets: dict) -> bool:
     """
     budgets expected format:
     { "key1": {"request": Decimal, "limit": Decimal}, ... }
+    or
+    { "key1": Decimal | int | float, ... }
     """
     if not budgets:
         return True
@@ -99,8 +116,13 @@ def check_budgets(budgets: dict) -> bool:
     try:
         current_values = redis_client.mget(keys)
         for i, val in enumerate(current_values):
-            limit_cents = int(budgets[keys[i]]["limit"] * 100)
-            request_cents = int(budgets[keys[i]]["request"] * 100)
+            item = budgets[keys[i]]
+            if isinstance(item, dict):
+                limit_cents = int(Decimal(str(item["limit"])) * 100) if item.get("limit") is not None else 0
+                request_cents = int(Decimal(str(item["request"])) * 100)
+            else:
+                limit_cents = 0
+                request_cents = int(Decimal(str(item)) * 100)
             
             # If not initialized, assume limit
             available = int(val) if val is not None else limit_cents
@@ -110,3 +132,4 @@ def check_budgets(budgets: dict) -> bool:
     except redis.RedisError:
         # Fail closed
         return False
+

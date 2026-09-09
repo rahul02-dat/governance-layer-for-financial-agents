@@ -1,4 +1,3 @@
-import React from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-dom';
 import { Shield, Users, Activity, Settings, AlertTriangle, Play, Search, CheckCircle } from 'lucide-react';
 import './index.css';
